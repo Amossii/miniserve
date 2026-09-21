@@ -1,8 +1,5 @@
-import time
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
 
 MODEL_ID = "/home/henry/project/models/Qwen2.5-0.5B-Instruct"
 MAX_NEW_TOKENS = 32
@@ -10,6 +7,7 @@ from miniserve.benchmark import (
     benchmark_wall_clock,
     tokens_per_second,
 )
+
 
 def bytes_to_gib(num_bytes: int) -> float:
     return num_bytes / (1024**3)
@@ -22,11 +20,7 @@ def main():
     device = torch.device("cuda")
 
     # Prefer BF16 when the GPU supports it.
-    dtype = (
-        torch.bfloat16
-        if torch.cuda.is_bf16_supported()
-        else torch.float16
-    )
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
     print("=== MiniServe Hugging Face Baseline ===")
     print(f"Model:  {MODEL_ID}")
@@ -54,24 +48,15 @@ def main():
     # 3. Model information
     # --------------------------------------------------
 
-    num_parameters = sum(
-        p.numel()
-        for p in model.parameters()
-    )
+    num_parameters = sum(p.numel() for p in model.parameters())
 
-    parameter_bytes = sum(
-        p.numel() * p.element_size()
-        for p in model.parameters()
-    )
+    parameter_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
 
     print()
     print("=== Model Info ===")
     print(f"Parameters:       {num_parameters / 1e6:.2f} M")
     print(f"Parameter memory: {bytes_to_gib(parameter_bytes):.3f} GiB")
-    print(
-        "CUDA allocated:  "
-        f"{bytes_to_gib(torch.cuda.memory_allocated()):.3f} GiB"
-    )
+    print(f"CUDA allocated:  {bytes_to_gib(torch.cuda.memory_allocated()):.3f} GiB")
 
     # --------------------------------------------------
     # 4. Construct one request
@@ -80,10 +65,7 @@ def main():
     messages = [
         {
             "role": "user",
-            "content": (
-                "你是猪"
-                "吗？"
-            ),
+            "content": ("你是猪吗？"),
         }
     ]
 
@@ -95,10 +77,7 @@ def main():
         return_tensors="pt",
     )
 
-    inputs = {
-        key: value.to(device)
-        for key, value in inputs.items()
-    }
+    inputs = {key: value.to(device) for key, value in inputs.items()}
 
     prompt_tokens = inputs["input_ids"].shape[1]
 
@@ -118,7 +97,6 @@ def main():
                 do_sample=False,
                 use_cache=True,
             )
-
 
     output_ids, stats = benchmark_wall_clock(
         generate,
@@ -142,31 +120,20 @@ def main():
     print()
     print("=== Benchmark ===")
 
-    print(
-        f"Mean latency: "
-        f"{stats.mean_ms:.2f} ms"
-    )
+    print(f"Mean latency: {stats.mean_ms:.2f} ms")
 
-    print(
-        f"P50 latency:  "
-        f"{stats.p50_ms:.2f} ms"
-    )
+    print(f"P50 latency:  {stats.p50_ms:.2f} ms")
 
-    print(
-        f"P95 latency:  "
-        f"{stats.p95_ms:.2f} ms"
-    )
+    print(f"P95 latency:  {stats.p95_ms:.2f} ms")
 
-    print(
-        f"P99 latency:  "
-        f"{stats.p99_ms:.2f} ms"
-    )
+    print(f"P99 latency:  {stats.p99_ms:.2f} ms")
     tps = tokens_per_second(
         generated_tokens,
         stats.mean_ms,
     )
 
     print(f"Output tok/s: {tps:.2f}")
+
 
 if __name__ == "__main__":
     main()

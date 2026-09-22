@@ -82,7 +82,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 5. 当前进度
 
-总路线为 30 步。目前完成 **24 / 30**，Phase A 已完成，下一步进入 Block KV Cache。
+总路线为 30 步。目前完成 **25 / 30**，Phase A 已完成，Phase B 已进入 Block KV Cache。
 
 | 范围 | 状态 | 说明 |
 |---|---|---|
@@ -93,11 +93,12 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 | Step 22 | 已完成 | RTX 4070 上的 Qwen GPU matrix、峰值显存和聚合报告已保存 |
 | Step 23 | 已完成 | 公共 runtime 装配、正式入口边界和回归验证 |
 | Step 24 | 已完成 | Architecture、Design Decisions、Phase A Report 与面试材料 |
-| Step 25–30 | 待完成 | Block KV、Paged KV、chunked prefill、preemption 与证据驱动优化 |
+| Step 25 | 已完成 | 固定大小 logical/physical block 与 metadata allocator |
+| Step 26–30 | 待完成 | Block table、Paged KV、chunked prefill、preemption 与证据驱动优化 |
 
 当前验证基线：
 
-- 全套测试：94 passed。
+- 全套测试：104 passed。
 - `scripts/run_engine.py` 可运行完整 Engine 链路并与 Hugging Face `generate()` 对照。
 - `scripts/benchmark_serving.py` 支持 burst、constant、poisson 到达和多组调度参数比较。
 - 已有 CPU smoke、RTX 4070 / Qwen2.5-0.5B GPU benchmark matrix 和 CUDA operator trace。
@@ -297,13 +298,13 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ### Phase B：KV Memory 与高级 Serving（Step 25–30，待完成）
 
-#### Step 25：Block Allocator
+#### Step 25：Block Allocator（已完成）
 
 目标：把 KV 内存管理从“每请求一个动态 tensor”抽象为固定大小 block。
 
 计划内容：定义 logical block、physical block、free list、allocation/free，以及请求结束时的资源回收。
 
-完成标准：allocator invariants 和碎片/耗尽场景有测试；尚不要求直接接入 attention kernel。
+完成标准：allocator invariants 和碎片/耗尽场景有测试；尚不要求直接接入 attention kernel。已实现固定大小 `LogicalBlock`、`PhysicalBlock`、确定性 free heap、原子多块分配/释放、request 级完整回收，以及耗尽、洞复用和非法释放测试。
 
 #### Step 26：Block Table 与 Slot Mapping
 

@@ -17,6 +17,8 @@ flowchart LR
 
 核心目标是解释真实 serving 系统的控制流、KV 生命周期和性能取舍，而不是包装一个聊天 API。完整架构与 invariant 见 [architecture.md](docs/architecture.md)。
 
+Phase B 已开始实现固定大小 KV block metadata allocator；设计与边界见 [block_allocator.md](docs/block_allocator.md)。当前 continuous inference 仍使用 Phase A per-request DynamicCache，待 block table 和 paged execution 完成后再切换。
+
 ## 功能
 
 - WAITING → RUNNING → FINISHED 请求状态机与 PREFILL → DECODE 阶段。

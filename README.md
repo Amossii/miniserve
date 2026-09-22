@@ -79,6 +79,19 @@ Request → Scheduler → Engine → DecodeBatchRunner → Model / KV → Metric
 
 这仍是同步 Engine 的进程内实验，不含网络。方法与边界见 [workload_benchmark.md](docs/workload_benchmark.md)。
 
+将原始 JSON 聚合为 Markdown 报告：
+
+```bash
+.venv/bin/python scripts/analyze_benchmark.py \
+  benchmarks/results/serving.json \
+  --output benchmarks/reports/serving.md
+```
+
+GPU 实验矩阵、显存口径和结果解释规则见 [gpu_benchmark.md](docs/gpu_benchmark.md)。
+本次 RTX 4070 / Qwen2.5-0.5B 的原始结果和生成报告分别位于
+[`step22_qwen_gpu_burst.json`](benchmarks/results/step22_qwen_gpu_burst.json) 与
+[`step22_qwen_gpu_burst.md`](benchmarks/reports/step22_qwen_gpu_burst.md)。
+
 ## Profiling
 
 Engine 分阶段计时：

@@ -29,7 +29,7 @@ def main():
 
     torch.cuda.synchronize()
 
-    print(f"GPU test:     OK")
+    print("GPU test:     OK")
     print(f"Result shape: {tuple(y.shape)}")
 
 

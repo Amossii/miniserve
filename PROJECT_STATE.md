@@ -82,7 +82,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 5. 当前进度
 
-总路线为 30 步。目前完成 **20 / 30**，剩余 **10 步**。
+总路线为 30 步。目前完成 **21 / 30**；Step 21 的 GPU profiler 验证仍待补齐。
 
 | 范围 | 状态 | 说明 |
 |---|---|---|
@@ -90,15 +90,16 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 | Step 16–19 | 已完成 | Prefill/decode 共存、token budget、metrics、时间驱动 workload |
 | Step 20 | 已完成 | Engine phase profiling 与结构化 trace |
 | Step 21 | 进行中 | CPU operator trace 已完成；CUDA/Nsight trace 待 GPU 环境验证 |
-| Step 22–24 | 待完成 | GPU benchmark、Phase A 工程与文档收尾 |
+| Step 22 | 已完成 | RTX 4070 上的 Qwen GPU matrix、峰值显存和聚合报告已保存 |
+| Step 23–24 | 待完成 | Phase A 工程与文档收尾 |
 | Step 25–30 | 待完成 | Block KV、Paged KV、chunked prefill、preemption 与证据驱动优化 |
 
 当前验证基线：
 
-- 全套测试：89 passed。
+- 全套测试：92 passed。
 - `scripts/run_engine.py` 可运行完整 Engine 链路并与 Hugging Face `generate()` 对照。
 - `scripts/benchmark_serving.py` 支持 burst、constant、poisson 到达和多组调度参数比较。
-- 已有 CPU 小模型与本地 Qwen 实验结果；尚无当前 continuous-batching Engine 的正式 GPU profiling 结论。
+- 已有 CPU smoke 与 RTX 4070 / Qwen2.5-0.5B GPU benchmark matrix；GPU operator profiling 结论仍待 Step 21 补齐。
 
 当前工作区包含尚未提交的 Step 18–19 相关改动与实验结果；“已完成”表示功能和验证完成，不表示已经创建 Git commit。
 
@@ -265,7 +266,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - 重复实验并报告原始样本、P50/P99、吞吐、TTFT、ITL、峰值显存。
 - 解释负载受限与系统饱和的区别，并记录 correctness 与环境元数据。
 
-完成标准：生成 benchmark 表格/图和分析文字，所有结论能够追溯到原始 JSON。
+完成标准：生成 benchmark 表格/图和分析文字，所有结论能够追溯到原始 JSON。已实现 schema v2 峰值 CUDA 显存记录、策略标签和 `scripts/analyze_benchmark.py` 原始样本聚合；RTX 4070 / Qwen2.5-0.5B 的三次重复 burst matrix 已通过 HF reference 和跨策略一致性检查。
 
 #### Step 23：Phase A 工程整合
 

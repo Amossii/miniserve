@@ -112,11 +112,6 @@ def main():
 
     generated_tokens = generated_ids.shape[1]
 
-    text = tokenizer.decode(
-        generated_ids[0],
-        skip_special_tokens=True,
-    )
-
     print()
     print("=== Benchmark ===")
 

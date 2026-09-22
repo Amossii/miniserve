@@ -1,4 +1,4 @@
-"""Step 19：按时间到达的可复现 serving benchmark，保存配置、计划与原始指标。"""
+"""Step 22：可复现 serving benchmark，保存原始指标、策略和峰值显存。"""
 
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def main():
     for capacity, budget in policies:
         validate_workload(specs, new_engine(capacity, budget))
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "config": {**vars(args), "output": str(args.output)},
         "environment": {
             "python": platform.python_version(),
@@ -142,7 +142,19 @@ def main():
             run_workload(new_engine(capacity, budget), warmup_specs)
             if args.device == "cuda":
                 torch.cuda.synchronize()
+                # 输入是当前 CUDA device；输出为空；重置统计窗口但不释放模型。
+                # 这样记录的是模型常驻显存之上的本次 workload 峰值。
+                torch.cuda.reset_peak_memory_stats()
             result = run_workload(new_engine(capacity, budget), specs)
+            if args.device == "cuda":
+                # run_workload 返回前 token 已读回 CPU，但这里仍显式同步，保证
+                # allocator 统计覆盖测量窗口内提交的全部 CUDA 工作。
+                torch.cuda.synchronize()
+                peak_allocated_bytes = torch.cuda.max_memory_allocated()
+                peak_reserved_bytes = torch.cuda.max_memory_reserved()
+            else:
+                peak_allocated_bytes = None
+                peak_reserved_bytes = None
             actual = [r.generated_token_ids for r in result.requests]
             if baseline_tokens is None:
                 baseline_tokens, reference_requests = actual, result.requests
@@ -151,10 +163,13 @@ def main():
                     "Outputs differ across policies/repeats; investigate before comparing speed."
                 )
             record = {
+                "policy": "sequential" if capacity == 1 else "continuous",
                 "max_running": capacity,
                 "token_budget": budget,
                 "repeat": repeat,
                 "iterations": result.iterations,
+                "peak_allocated_bytes": peak_allocated_bytes,
+                "peak_reserved_bytes": peak_reserved_bytes,
                 "submitted_metrics": metric_dict(result.submitted_metrics),
                 "scheduled_metrics": metric_dict(result.scheduled_metrics),
                 "dispatch_lag_ms": result.dispatch_lag_ms.samples_ms,

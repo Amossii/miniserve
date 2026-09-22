@@ -10,11 +10,8 @@ from pathlib import Path
 
 import torch
 import transformers
-from run_engine import check_reference, load_model_and_prompts
 
-from miniserve.decode_batch import DecodeBatchRunner, normalize_eos_token_ids
-from miniserve.engine import Engine
-from miniserve.scheduler import Scheduler
+from miniserve.runtime import build_engine, check_reference, load_runtime
 from miniserve.workload import generate_workload, run_workload, validate_workload
 
 
@@ -70,7 +67,8 @@ def metric_dict(report):
 def main():
     """输入命令行；无返回；同一模型/计划比较配置，隔离预热并保存每次结果。"""
     args = parse_args()
-    model, _, prompts = load_model_and_prompts(args)
+    runtime = load_runtime(args.model, args.device)
+    model, prompts = runtime.model, runtime.prompts
     specs = generate_workload(
         prompts,
         num_requests=args.num_requests,
@@ -78,11 +76,6 @@ def main():
         arrival=args.arrival,
         request_rate=args.request_rate,
         seed=args.seed,
-    )
-    runner = DecodeBatchRunner(
-        model=model,
-        device=torch.device(args.device),
-        eos_token_ids=normalize_eos_token_ids(model.generation_config.eos_token_id),
     )
     policies = list(
         dict.fromkeys(
@@ -94,11 +87,10 @@ def main():
 
     def new_engine(capacity, budget):
         """输入策略；返回空 Engine；复用模型但不复用 Request、队列或 KV。"""
-        return Engine(
-            scheduler=Scheduler(
-                max_num_running=capacity, max_num_batched_tokens=budget
-            ),
-            decode_runner=runner,
+        return build_engine(
+            runtime,
+            max_running=capacity,
+            token_budget=budget,
         )
 
     for capacity, budget in policies:
@@ -195,7 +187,7 @@ def main():
                 f"{metrics.ttft_ms.p50_ms:19.3f} {itl:>10} {result.dispatch_lag_ms.p99_ms:15.3f}"
             )
     if args.check_reference:
-        check_reference(model, reference_requests, torch.device(args.device))
+        check_reference(runtime, reference_requests)
     payload["correctness"] = {
         "cross_run_equal": True if len(payload["runs"]) > 1 else None,
         "hf_reference": "passed" if args.check_reference else "not_run",

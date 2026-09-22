@@ -92,6 +92,12 @@ GPU 实验矩阵、显存口径和结果解释规则见 [gpu_benchmark.md](docs/
 [`step22_qwen_gpu_burst.json`](benchmarks/results/step22_qwen_gpu_burst.json) 与
 [`step22_qwen_gpu_burst.md`](benchmarks/reports/step22_qwen_gpu_burst.md)。
 
+## 正式入口与项目结构
+
+当前演示、benchmark 和 profiler 入口统一使用 `miniserve.runtime` 装配模型与
+Engine。正式入口、学习实验的边界和资源生命周期见
+[project_structure.md](docs/project_structure.md)。
+
 ## Profiling
 
 Engine 分阶段计时：

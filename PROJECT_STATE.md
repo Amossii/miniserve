@@ -82,7 +82,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 5. 当前进度
 
-总路线为 30 步。目前完成 **21 / 30**；Step 21 的 GPU profiler 验证仍待补齐。
+总路线为 30 步。目前完成 **22 / 30**；Step 21 的 GPU profiler 验证仍待补齐。
 
 | 范围 | 状态 | 说明 |
 |---|---|---|
@@ -91,12 +91,13 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 | Step 20 | 已完成 | Engine phase profiling 与结构化 trace |
 | Step 21 | 进行中 | CPU operator trace 已完成；CUDA/Nsight trace 待 GPU 环境验证 |
 | Step 22 | 已完成 | RTX 4070 上的 Qwen GPU matrix、峰值显存和聚合报告已保存 |
-| Step 23–24 | 待完成 | Phase A 工程与文档收尾 |
+| Step 23 | 已完成 | 公共 runtime 装配、正式入口边界和回归验证 |
+| Step 24 | 待完成 | Phase A 文档、benchmark report 与简历交付 |
 | Step 25–30 | 待完成 | Block KV、Paged KV、chunked prefill、preemption 与证据驱动优化 |
 
 当前验证基线：
 
-- 全套测试：92 passed。
+- 全套测试：94 passed。
 - `scripts/run_engine.py` 可运行完整 Engine 链路并与 Hugging Face `generate()` 对照。
 - `scripts/benchmark_serving.py` 支持 burst、constant、poisson 到达和多组调度参数比较。
 - 已有 CPU smoke 与 RTX 4070 / Qwen2.5-0.5B GPU benchmark matrix；GPU operator profiling 结论仍待 Step 21 补齐。
@@ -279,7 +280,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - 补齐错误信息、资源释放、随机种子、输出目录与结果 schema。
 - 只保留有价值的测试，确保 CPU correctness suite 和可选 GPU smoke test 清晰。
 
-完成标准：新用户能按文档完成环境检查、正确性测试、完整演示、benchmark 和 profiling。
+完成标准：新用户能按文档完成环境检查、正确性测试、完整演示、benchmark 和 profiling。已新增 `miniserve.runtime` 统一模型加载、设备检查、预算验证、Engine 构造和 HF 对照；正式脚本不再互相导入，入口与历史学习实验的边界记录在 `docs/project_structure.md`。
 
 #### Step 24：Phase A 文档、Benchmark Report 与简历交付
 

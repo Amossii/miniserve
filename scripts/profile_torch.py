@@ -7,12 +7,15 @@ import json
 from pathlib import Path
 
 import torch
-from run_engine import load_model_and_prompts
 
-from miniserve.decode_batch import DecodeBatchRunner, normalize_eos_token_ids
 from miniserve.engine import Engine
 from miniserve.request import Request
-from miniserve.scheduler import Scheduler
+from miniserve.runtime import (
+    build_engine,
+    load_runtime,
+    resolve_token_budget,
+    validate_engine_limits,
+)
 
 
 def main() -> None:
@@ -36,26 +39,20 @@ def main() -> None:
     if args.device == "cuda" and not torch.cuda.is_available():
         parser.error("CUDA unavailable; use --device cpu")
 
-    model, _, prompts = load_model_and_prompts(args)
-    budget = args.token_budget or (256 if args.model else 6)
-    if budget < args.max_running or max(map(len, prompts)) > budget:
-        parser.error("token-budget must cover max-running and every prompt")
-    device = torch.device(args.device)
+    runtime = load_runtime(args.model, args.device)
+    model, prompts, device = runtime.model, runtime.prompts, runtime.device
+    budget = resolve_token_budget(args.model, args.token_budget)
+    try:
+        validate_engine_limits(prompts, args.max_running, budget)
+    except ValueError as error:
+        parser.error(str(error))
 
     def new_engine(*, annotated: bool) -> Engine:
         """输入 annotation 开关；返回隔离 Engine；profile run 才启用用户区间。"""
-        runner = DecodeBatchRunner(
-            model=model,
-            device=device,
-            eos_token_ids=normalize_eos_token_ids(model.generation_config.eos_token_id),
-            annotate_profiler=annotated,
-        )
-        return Engine(
-            scheduler=Scheduler(
-                max_num_running=args.max_running,
-                max_num_batched_tokens=budget,
-            ),
-            decode_runner=runner,
+        return build_engine(
+            runtime,
+            max_running=args.max_running,
+            token_budget=budget,
             annotate_profiler=annotated,
         )
 

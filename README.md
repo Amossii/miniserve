@@ -62,6 +62,19 @@ Request → Scheduler → Engine → DecodeBatchRunner → Model / KV → Metric
 .venv/bin/python -m pytest -q
 ```
 
-正式 workload generator、请求率实验和性能对比属于后续工作。指标定义见 [serving_metrics.md](docs/serving_metrics.md)。
+按时间到达的 workload 与配置对比已提供，见下节。指标定义见 [serving_metrics.md](docs/serving_metrics.md)。
 
 `scripts/` 中其他文件是早期课程实验；部分使用历史 Engine 接口。当前整体演示请从 `scripts/run_engine.py` 开始。
+
+## Step 19：时间驱动的 Benchmark
+
+```bash
+.venv/bin/python scripts/benchmark_serving.py \
+  --arrival poisson --request-rate 50 --num-requests 24 \
+  --max-running 1 3 --token-budgets 6 12 --repeats 3 \
+  --check-reference --output benchmarks/results/serving.json
+```
+
+支持 burst、constant、poisson 到达。每种策略复用相同计划，报告包含实际提交与计划到达两种 TTFT、提交延迟、ITL、吞吐和原始样本。默认使用 CPU 小模型；本地模型加 `--model`，并把预算调整到足够容纳完整 prompt。
+
+这仍是同步 Engine 的进程内实验，不含网络。方法与边界见 [workload_benchmark.md](docs/workload_benchmark.md)。

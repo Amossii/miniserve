@@ -517,13 +517,15 @@ class DecodeBatchRunner:
 
         # 如果没有直接结束，
         # 应满足最重要的 decode invariant。
-        if not request.is_finished:
-            if request.sequence_length != cache_length(cache) + 1:
-                raise RuntimeError(
-                    "Prefill invariant violated: "
-                    "request.sequence_length must equal "
-                    "cache_length + 1."
-                )
+        if (
+            not request.is_finished
+            and request.sequence_length != cache_length(cache) + 1
+        ):
+            raise RuntimeError(
+                "Prefill invariant violated: "
+                "request.sequence_length must equal "
+                "cache_length + 1."
+            )
 
         return state
 
@@ -676,9 +678,9 @@ class DecodeBatchRunner:
             model_config=self.model.config,
         )
 
+        # tolist() 将整批输出读回 CPU；CUDA 上等待必要的数据传输完成后才计时。
+        produced_token_ids: list[int] = next_token_ids.tolist()
         timestamp = time.perf_counter()
-
-        produced_token_ids: list[int] = []
 
         # -------------------------------------------------
         # 8. 更新每个 Request 的逻辑状态
@@ -694,9 +696,7 @@ class DecodeBatchRunner:
             # 本轮 input token
             state.cache = individual_caches[batch_index]
 
-            token_id = int(next_token_ids[batch_index].item())
-
-            produced_token_ids.append(token_id)
+            token_id = produced_token_ids[batch_index]
 
             # token_id 是这一轮新预测出来的。
             #
@@ -715,11 +715,13 @@ class DecodeBatchRunner:
             # request sequence
             # =
             # cache sequence + 1
-            if not request.is_finished:
-                if request.sequence_length != cache_length(state.cache) + 1:
-                    raise RuntimeError(
-                        f"Post-decode invariant violated for {request.request_id}."
-                    )
+            if (
+                not request.is_finished
+                and request.sequence_length != cache_length(state.cache) + 1
+            ):
+                raise RuntimeError(
+                    f"Post-decode invariant violated for {request.request_id}."
+                )
 
         return DecodeStepOutput(
             request_ids=tuple(state.request.request_id for state in states),

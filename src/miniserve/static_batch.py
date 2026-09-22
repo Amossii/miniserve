@@ -265,15 +265,15 @@ class StaticBatchRunner:
             device=self.device,
         )
 
-        # 同一个 batch forward 完成的 token
-        # 使用同一个逻辑时间点。
+        # 先将输出读回 CPU，再为同一批 token 记录统一的可用时间。
+        produced_token_ids = next_token_ids.tolist()
         timestamp = time.perf_counter()
 
         for batch_index, request in enumerate(requests):
             if request.is_finished:
                 continue
 
-            token_id = int(next_token_ids[batch_index].item())
+            token_id = produced_token_ids[batch_index]
 
             request.append_generated_token(
                 token_id,

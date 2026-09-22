@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 
 from miniserve.decode_batch import DecodeBatchRunner, DecodeState
 from miniserve.request import Request
@@ -29,8 +30,11 @@ class Engine:
         self.decode_states: dict[str, DecodeState] = {}
 
     def add_request(self, request: Request) -> None:
-        """输入请求；无返回；委托调度器入队，模型状态到 prefill 时才创建。"""
+        """输入请求；无返回；成功入队后采用调用入口时间，排除预创建对象的等待。"""
+        arrival_time = perf_counter()
         self.scheduler.add_request(request)
+        # 校验失败时不覆盖已有请求的时间，尤其是重复提交同一对象。
+        request.arrival_time = arrival_time
 
     def has_unfinished_requests(self) -> bool:
         """输入自身；返回是否仍有工作；只读，供调用方驱动循环。"""

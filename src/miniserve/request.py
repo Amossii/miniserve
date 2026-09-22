@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from itertools import pairwise
+from math import isfinite
 from time import perf_counter
 
 
@@ -34,6 +36,7 @@ class Request:
     finish_time: float | None = None
     prefill_completed: bool = False
     first_token_time: float | None = None
+    token_timestamps: list[float] = field(default_factory=list)
 
     @property
     def phase(self) -> ExecutionPhase:
@@ -87,12 +90,12 @@ class Request:
         """输入自身；返回是否达到生成上限；只读，统一停止条件。"""
         return self.num_generated_tokens >= self.max_new_tokens
 
-    def mark_running(self) -> None:
-        """输入自身；无返回；更新状态与接纳时间，只允许 WAITING 转入。"""
+    def mark_running(self, *, timestamp: float | None = None) -> None:
+        """输入可选接纳时间；无返回；更新状态与时间，允许测试注入同一时钟。"""
         if not self.is_waiting:
             raise RuntimeError("Only waiting request can become running.")
         self.status = RequestStatus.RUNNING
-        self.start_time = perf_counter()
+        self.start_time = perf_counter() if timestamp is None else timestamp
 
     def mark_prefill_completed(self) -> None:
         """输入自身；无返回；更新阶段，拒绝未接纳或重复 prefill。"""
@@ -103,12 +106,18 @@ class Request:
     def append_generated_token(
         self, token_id: int, *, timestamp: float | None = None
     ) -> None:
-        """输入 token 与可选时间；无返回；追加输出、记录首 token，防止越界生成。"""
+        """输入 token 与可选时间；无返回；同步追加 token/时间，拒绝倒退时间。"""
         if not self.is_running or self.reached_max_new_tokens:
             raise RuntimeError("Request cannot accept another generated token.")
+        timestamp = perf_counter() if timestamp is None else timestamp
+        if not isfinite(timestamp) or (
+            self.token_timestamps and timestamp < self.token_timestamps[-1]
+        ):
+            raise ValueError("Token timestamps must be finite and nondecreasing.")
         self.generated_token_ids.append(token_id)
+        self.token_timestamps.append(timestamp)
         if self.first_token_time is None:
-            self.first_token_time = perf_counter() if timestamp is None else timestamp
+            self.first_token_time = timestamp
 
     def mark_finished(self, *, timestamp: float | None = None) -> None:
         """输入可选时间；无返回；记录完成，重复调用幂等，禁止 WAITING 直接完成。"""
@@ -132,3 +141,24 @@ class Request:
         if self.finish_time is None:
             return None
         return self.finish_time - self.arrival_time
+
+    @property
+    def queue_wait_seconds(self) -> float | None:
+        """输入自身；返回接纳前等待秒数或 None；只读，区别排队与 prefill 时间。"""
+        if self.start_time is None:
+            return None
+        return self.start_time - self.arrival_time
+
+    @property
+    def itl_seconds(self) -> list[float]:
+        """输入自身；返回相邻输出间隔副本；只读，少于两个 token 时无间隔样本。"""
+        return [b - a for a, b in pairwise(self.token_timestamps)]
+
+    @property
+    def tpot_seconds(self) -> float | None:
+        """输入自身；返回首末 token 间平均间隔；只读，单 token 请求返回 None。"""
+        if len(self.token_timestamps) < 2:
+            return None
+        return (self.token_timestamps[-1] - self.token_timestamps[0]) / (
+            len(self.token_timestamps) - 1
+        )

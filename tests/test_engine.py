@@ -152,3 +152,86 @@ def test_empty_step_and_missing_cache(engine):
     engine.decode_states.clear()
     with pytest.raises(RuntimeError, match="Missing decode state: A"):
         engine.step()
+
+
+def test_submission_time_and_failed_resubmission(engine, monkeypatch):
+    """输入 Engine/时钟补丁；无返回；验证入队计时覆盖创建时间，失败提交不改时间。"""
+    monkeypatch.setattr("miniserve.engine.perf_counter", lambda: 10.0)
+    request = Request("A", [1], arrival_time=1.0)
+    engine.add_request(request)
+    assert request.arrival_time == 10.0
+    monkeypatch.setattr("miniserve.engine.perf_counter", lambda: 20.0)
+    with pytest.raises(ValueError):
+        engine.add_request(request)
+    assert request.arrival_time == 10.0
+
+
+def test_real_generation_to_serving_report(engine):
+    """输入 CPU Engine；无返回；执行真实生成并汇总，覆盖单 token 请求的缺省 TPOT。"""
+    from time import perf_counter
+
+    from miniserve.benchmark import summarize_serving
+
+    requests = [
+        Request("A", [1, 2], max_new_tokens=3),
+        Request("B", [1, 3, 4], max_new_tokens=1),
+    ]
+    started = perf_counter()
+    for request in requests:
+        engine.add_request(request)
+    for _ in range(3):
+        engine.step()
+    assert not engine.has_unfinished_requests()
+    report = summarize_serving(
+        requests, workload_start=started, workload_end=perf_counter()
+    )
+    assert report.num_requests == 2
+    assert report.num_output_tokens == 4
+    assert len(report.ttft_ms.samples_ms) == 2
+    assert len(report.tpot_ms.samples_ms) == 1
+    assert len(report.itl_ms.samples_ms) == 2
+    assert all(r.finish_time == r.token_timestamps[-1] for r in requests)
+
+
+def test_engine_metrics_and_decode_timestamp_after_readback(engine, monkeypatch):
+    """输入真实 CPU Engine；无返回；检查 decode 先读回再计时，并汇总完整时间线。"""
+    from time import perf_counter
+    from types import SimpleNamespace
+
+    from miniserve.benchmark import summarize_serving
+
+    started = perf_counter()
+    requests = [
+        Request("A", [1, 2], max_new_tokens=2),
+        Request("B", [1, 3, 4], max_new_tokens=2),
+    ]
+    for request in requests:
+        engine.add_request(request)
+    engine.step()
+    events = []
+
+    def readback():
+        """输入无；返回假采样 token；记录读回事件，独立检测计时的先后顺序。"""
+        events.append("readback")
+        return [5, 6]
+
+    def clock():
+        """输入无；返回真实时间；记录时钟事件，验证 CPU 可用边界。"""
+        events.append("timestamp")
+        return perf_counter()
+
+    monkeypatch.setattr(
+        torch, "argmax", lambda *args, **kwargs: SimpleNamespace(tolist=readback)
+    )
+    monkeypatch.setattr(
+        "miniserve.decode_batch.time", SimpleNamespace(perf_counter=clock)
+    )
+    engine.step()
+    assert events == ["readback", "timestamp"]
+    assert requests[0].token_timestamps[-1] == requests[1].token_timestamps[-1]
+    report = summarize_serving(
+        requests, workload_start=started, workload_end=perf_counter()
+    )
+    assert report.num_output_tokens == 4
+    assert len(report.itl_ms.samples_ms) == 2
+    assert all(len(r.token_timestamps) == r.num_generated_tokens for r in requests)

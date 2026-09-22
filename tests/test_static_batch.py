@@ -216,3 +216,44 @@ def test_position_ids():
         [0, 1, 2, 3],
         [0, 0, 1, 2],
     ]
+
+
+def test_static_tokens_are_read_before_timestamp(monkeypatch):
+    """输入补丁工具；无返回；验证静态批处理读回顺序，已结束行不会追加计时样本。"""
+    runner = StaticBatchRunner(
+        model=SimpleNamespace(),
+        device=torch.device("cpu"),
+        pad_token_id=0,
+        eos_token_ids={99},
+    )
+    active = Request("A", [1], max_new_tokens=1, arrival_time=0)
+    finished = Request("B", [1], max_new_tokens=1, arrival_time=0)
+    active.mark_running(timestamp=0)
+    finished.mark_running(timestamp=0)
+    finished.append_generated_token(99, timestamp=0.1)
+    finished.mark_finished(timestamp=0.1)
+    events = []
+
+    def readback():
+        """输入无；返回采样结果；记录 CPU 读回事件，验证计时顺序。"""
+        events.append("readback")
+        return [5, 6]
+
+    def clock():
+        """输入无；返回固定时间；记录计时事件，避免依赖测试运行速度。"""
+        events.append("timestamp")
+        return 0.2
+
+    monkeypatch.setattr(
+        torch, "argmax", lambda *args, **kwargs: SimpleNamespace(tolist=readback)
+    )
+    monkeypatch.setattr(
+        "miniserve.static_batch.time", SimpleNamespace(perf_counter=clock)
+    )
+    runner._consume_logits(
+        [active, finished], torch.zeros(2, 1, 8), completing_prefill=True
+    )
+    assert events == ["readback", "timestamp"]
+    assert active.token_timestamps == [0.2]
+    assert active.finish_time == 0.2
+    assert finished.token_timestamps == [0.1]

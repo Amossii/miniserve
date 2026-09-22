@@ -82,17 +82,17 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 5. 当前进度
 
-总路线为 30 步。目前完成 **22 / 30**；Step 21 的 GPU profiler 验证仍待补齐。
+总路线为 30 步。目前完成 **24 / 30**，Phase A 已完成，下一步进入 Block KV Cache。
 
 | 范围 | 状态 | 说明 |
 |---|---|---|
 | Step 1–15 | 已完成 | 基础推理、KV、Engine、Scheduler、continuous batching |
 | Step 16–19 | 已完成 | Prefill/decode 共存、token budget、metrics、时间驱动 workload |
 | Step 20 | 已完成 | Engine phase profiling 与结构化 trace |
-| Step 21 | 进行中 | CPU operator trace 已完成；CUDA/Nsight trace 待 GPU 环境验证 |
+| Step 21 | 已完成 | CPU/CUDA operator trace 与 KV pack/unpack 瓶颈证据已保存 |
 | Step 22 | 已完成 | RTX 4070 上的 Qwen GPU matrix、峰值显存和聚合报告已保存 |
 | Step 23 | 已完成 | 公共 runtime 装配、正式入口边界和回归验证 |
-| Step 24 | 待完成 | Phase A 文档、benchmark report 与简历交付 |
+| Step 24 | 已完成 | Architecture、Design Decisions、Phase A Report 与面试材料 |
 | Step 25–30 | 待完成 | Block KV、Paged KV、chunked prefill、preemption 与证据驱动优化 |
 
 当前验证基线：
@@ -100,7 +100,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - 全套测试：94 passed。
 - `scripts/run_engine.py` 可运行完整 Engine 链路并与 Hugging Face `generate()` 对照。
 - `scripts/benchmark_serving.py` 支持 burst、constant、poisson 到达和多组调度参数比较。
-- 已有 CPU smoke 与 RTX 4070 / Qwen2.5-0.5B GPU benchmark matrix；GPU operator profiling 结论仍待 Step 21 补齐。
+- 已有 CPU smoke、RTX 4070 / Qwen2.5-0.5B GPU benchmark matrix 和 CUDA operator trace。
 
 当前工作区包含尚未提交的 Step 18–19 相关改动与实验结果；“已完成”表示功能和验证完成，不表示已经创建 Git commit。
 
@@ -254,7 +254,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - 选择关键区间进一步用 Nsight Compute 或等价工具检查 memory/compute bottleneck。
 - 将 prefill 与 decode 分开分析，避免用统一结论描述两种工作负载。
 
-完成标准：保存可复现 profiler 命令、trace 文件说明和至少一个有证据的瓶颈结论。当前已完成 PyTorch CPU trace、Engine/runner annotations 和 CUDA/Nsight 入口；由于当前 `torch.cuda.is_available()` 为 False，GPU trace 与 GPU 瓶颈结论仍待验证。
+完成标准：保存可复现 profiler 命令、trace 文件说明和至少一个有证据的瓶颈结论。已完成 CPU/CUDA PyTorch trace、Engine/runner annotations 和 Nsight 入口；Qwen CUDA trace 中 `aten::cat` 出现 3035 次并报告约 59.24 MiB allocation，与当前 KV pack/unpack 设计相符。完整限制见 `docs/operator_profiling.md`。
 
 #### Step 22：GPU Benchmark Matrix 与性能分析
 
@@ -293,7 +293,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - 记录当前 per-request padded KV 的时间/空间代价，以及与 vLLM/SGLang 的差距。
 - 准备简历 bullet、项目介绍和常见面试问题。
 
-完成标准：GitHub reviewer 不依赖课程对话也能理解、运行和评估项目；Phase A tag/release 可创建。
+完成标准：GitHub reviewer 不依赖课程对话也能理解、运行和评估项目；Phase A tag/release 可创建。已完成 `architecture.md`、`design_decisions.md`、`phase_a_report.md` 和 `interview_guide.md`，README 串联运行入口、实验证据与项目边界。
 
 ### Phase B：KV Memory 与高级 Serving（Step 25–30，待完成）
 

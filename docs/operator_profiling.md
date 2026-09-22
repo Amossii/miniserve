@@ -68,14 +68,12 @@ bash scripts/profile_nsys.sh \
 
 Nsight Systems 用于系统时间线。只有当时间线已经定位到关键 kernel，才使用 Nsight Compute 分析该 kernel 的 memory throughput、occupancy、warp stall 等指标。不要一开始对所有 kernel 全量采集 NCU 指标。
 
-## 当前环境结论
+## 当前 GPU trace 结论
 
-当前 PyTorch 是 CUDA build，但 `torch.cuda.is_available()` 为 False；`nsys` 和 `ncu` 命令存在。因此本课完成了 CPU operator trace 和全部 CUDA profiling 入口，尚未生成可信的 GPU trace。
+已在 NVIDIA GeForce RTX 4070 Laptop GPU 上采集 Qwen2.5-0.5B-Instruct BF16 trace：capacity 4、token budget 128、8 个 Engine iteration。metadata 与 operator table 位于 `benchmarks/profiles/step21_qwen_cuda/`；大型 Chrome trace 默认由 Git 忽略并保留在本地。
 
-本次 CPU 小模型 trace 中：
+- `decode_model_forward`、`prefill_model_forward`、`kv_pack` 和 `kv_unpack` 用户区间均可定位。
+- `aten::cat` 出现 3035 次，约占 7.82 ms self CUDA time，并报告约 59.24 MiB CUDA allocation。
+- 大量 cat 与小粒度 elementwise kernel 符合当前逐层 KV padding、pack、unpack 的执行方式，因此它是 Phase B block/paged KV 的直接优化候选。
 
-- `decode_model_forward` 与 `prefill_model_forward` 是主要用户区间。
-- `kv_pack` 和 `kv_unpack` 已能从模型 forward 中独立识别。
-- 这只证明标注和导出路径正确，不支持关于 GPU utilization、memory-bound 或 compute-bound 的结论。
-
-在 CUDA 可用机器上完成 PyTorch CUDA trace 与 Nsight Systems trace 后，Step 21 才达到完整验收标准。
+Profiler 开启了 shape 和 memory 记录，会显著增加开销；用户区间可以嵌套和重叠，不能把表中的区间百分比相加。这份证据可以定位数据搬运问题，但不足以单独证明整个 decode memory-bound。后续用 Nsight Systems 检查 launch gap，再针对关键 kernel 用 Nsight Compute 检查带宽、occupancy 和 stall。

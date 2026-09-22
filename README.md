@@ -1,6 +1,43 @@
 # MiniServe
 
-一个用于学习 LLM serving 的简化推理引擎，当前支持 per-request KV、动态连续批处理、完整 prefill 的 token budget 调度和请求级指标。
+一个从零实现的教学型 LLM continuous-batching inference engine。项目覆盖 per-request KV Cache、异长 context batched decode、prefill/decode 共存、动态请求接纳、token-budget scheduling、serving metrics、GPU benchmark 与 profiling。
+
+```mermaid
+flowchart LR
+    R[Request / Workload] --> S[Scheduler]
+    S --> E[Engine.step]
+    E --> P[Prefill batch]
+    E --> D[Decode batch]
+    P --> M[HF Causal LM]
+    D --> K[KV pack / unpack]
+    K --> M
+    M --> T[Request state / Metrics]
+    T --> S
+```
+
+核心目标是解释真实 serving 系统的控制流、KV 生命周期和性能取舍，而不是包装一个聊天 API。完整架构与 invariant 见 [architecture.md](docs/architecture.md)。
+
+## 功能
+
+- WAITING → RUNNING → FINISHED 请求状态机与 PREFILL → DECODE 阶段。
+- FIFO admission、动态 slot 复用、最大并发数与每轮 token budget。
+- 新请求 prefill 与已有请求 decode 在同一 Engine iteration 共存。
+- 不同 context length 的 per-request KV pack、batched forward 和 unpack。
+- Queue wait、TTFT、ITL、TPOT、E2E、吞吐和峰值 CUDA 显存。
+- Burst、constant、Poisson 到达 workload，原始样本 JSON 与报告聚合。
+- Engine phase、PyTorch operator 和 Nsight Systems profiling 入口。
+- 跨策略逐 token 对照与 Hugging Face greedy reference。
+
+## GPU 结果摘要
+
+RTX 4070 Laptop GPU、Qwen2.5-0.5B-Instruct BF16、12 个 burst 请求、最多 8 个输出 token、3 次重复：
+
+| Policy | Capacity / Budget | Output tok/s median | TTFT P50 | ITL P99 | Peak allocated |
+|---|---:|---:|---:|---:|---:|
+| sequential | 1 / 64 | 20.13 | 1280.92 ms | 76.27 ms | 969.5 MiB |
+| continuous | 4 / 64 | 37.92 | 514.85 ms | 174.76 ms | 970.4 MiB |
+
+在该有限 workload 下，capacity 4 的吞吐中位数提高约 88%、TTFT P50 降低约 60%，同时 ITL P99 上升。实验合同、完整矩阵和限制见 [phase_a_report.md](docs/phase_a_report.md)，原始 JSON 位于 [`step22_qwen_gpu_burst.json`](benchmarks/results/step22_qwen_gpu_burst.json)。
 
 ## 运行完整链路
 

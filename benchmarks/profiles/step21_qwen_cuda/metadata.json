@@ -1,0 +1,17 @@
+{
+  "device": "cuda",
+  "model": "/home/henry/project/models/Qwen2.5-0.5B-Instruct",
+  "dtype": "torch.bfloat16",
+  "torch": "2.14.0+cu130",
+  "activities": [
+    "CPU",
+    "CUDA"
+  ],
+  "executed_steps": 8,
+  "unfinished_after_profile": true,
+  "max_running": 4,
+  "token_budget": 128,
+  "record_shapes": true,
+  "profile_memory": true,
+  "sort_by": "self_cuda_time_total"
+}

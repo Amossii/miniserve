@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
+from torch.profiler import record_function
 from transformers import DynamicCache
 
 from miniserve.request import Request
@@ -416,11 +418,17 @@ class DecodeBatchRunner:
         model,
         device: torch.device,
         eos_token_ids: set[int],
+        annotate_profiler: bool = False,
     ) -> None:
 
         self.model = model
         self.device = device
         self.eos_token_ids = set(eos_token_ids)
+        self.annotate_profiler = annotate_profiler
+
+    def _profile_scope(self, name: str):
+        """输入区间名；返回 record_function 或空上下文；默认路径不产生 profiler annotation。"""
+        return record_function(name) if self.annotate_profiler else nullcontext()
 
     # -----------------------------------------------------
     # 对一个 RUNNING + PREFILL Request
@@ -480,14 +488,15 @@ class DecodeBatchRunner:
 
         cache = DynamicCache(config=self.model.config)
 
-        outputs = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            cache_position=cache_position,
-            past_key_values=cache,
-            use_cache=True,
-        )
+        with self._profile_scope("miniserve::prefill_model_forward"):
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                cache_position=cache_position,
+                past_key_values=cache,
+                use_cache=True,
+            )
 
         cache = outputs.past_key_values
 
@@ -586,14 +595,15 @@ class DecodeBatchRunner:
         # 1. Pack KV Cache
         # -------------------------------------------------
 
-        (
-            batched_cache,
-            logical_lengths,
-            physical_length,
-        ) = pack_dynamic_caches(
-            states,
-            model_config=self.model.config,
-        )
+        with self._profile_scope("miniserve::kv_pack"):
+            (
+                batched_cache,
+                logical_lengths,
+                physical_length,
+            ) = pack_dynamic_caches(
+                states,
+                model_config=self.model.config,
+            )
 
         # -------------------------------------------------
         # 2. 构造 [B, 1] decode input
@@ -651,14 +661,15 @@ class DecodeBatchRunner:
         # 6. 真正的一次 Batched Decode Forward
         # -------------------------------------------------
 
-        outputs = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            cache_position=cache_position,
-            past_key_values=batched_cache,
-            use_cache=True,
-        )
+        with self._profile_scope("miniserve::decode_model_forward"):
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                cache_position=cache_position,
+                past_key_values=batched_cache,
+                use_cache=True,
+            )
 
         next_token_ids = torch.argmax(
             outputs.logits[:, -1, :],
@@ -671,12 +682,13 @@ class DecodeBatchRunner:
         # 每个 Request 的 logical cache length 都 +1。
         # -------------------------------------------------
 
-        individual_caches = unpack_dynamic_cache(
-            outputs.past_key_values,
-            logical_lengths_before=(logical_lengths),
-            physical_length_before=(physical_length),
-            model_config=self.model.config,
-        )
+        with self._profile_scope("miniserve::kv_unpack"):
+            individual_caches = unpack_dynamic_cache(
+                outputs.past_key_values,
+                logical_lengths_before=(logical_lengths),
+                physical_length_before=(physical_length),
+                model_config=self.model.config,
+            )
 
         # tolist() 将整批输出读回 CPU；CUDA 上等待必要的数据传输完成后才计时。
         produced_token_ids: list[int] = next_token_ids.tolist()

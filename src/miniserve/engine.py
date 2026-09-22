@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from time import perf_counter
+
+from torch.profiler import record_function
 
 from miniserve.decode_batch import DecodeBatchRunner, DecodeState
 from miniserve.profiling import EngineProfiler, StepProfile, _PhaseTimer
@@ -28,12 +31,14 @@ class Engine:
         scheduler: Scheduler,
         decode_runner: DecodeBatchRunner,
         profiler: EngineProfiler | None = None,
+        annotate_profiler: bool = False,
     ) -> None:
         """输入调度器、执行器和可选 profiler；无返回；建立 KV 索引与 iteration 计数。"""
         self.scheduler = scheduler
         self.decode_runner = decode_runner
         self.decode_states: dict[str, DecodeState] = {}
         self.profiler = profiler
+        self.annotate_profiler = annotate_profiler
         self.iteration = 0
         self.last_profile: StepProfile | None = None
 
@@ -52,7 +57,9 @@ class Engine:
         """输入队列与 KV 状态；返回本轮结果；可选记录 scheduler/forward/reclaim 阶段。"""
         total_timer = _PhaseTimer() if self.profiler is not None else None
         scheduler_timer = _PhaseTimer() if self.profiler is not None else None
-        plan = self.scheduler.schedule()
+        scope = record_function if self.annotate_profiler else lambda _: nullcontext()
+        with scope("miniserve::scheduler"):
+            plan = self.scheduler.schedule()
         scheduler_seconds = scheduler_timer.elapsed() if scheduler_timer else 0.0
         for request in plan.finished_requests:
             self.decode_states.pop(request.request_id, None)
@@ -65,25 +72,28 @@ class Engine:
             active_states.append(self.decode_states[request.request_id])
 
         prefill_timer = _PhaseTimer() if self.profiler is not None else None
-        for request in plan.prefill_requests:
-            state = self.decode_runner.prefill_request(request)
-            self.decode_states[request.request_id] = state
+        with scope("miniserve::prefill"):
+            for request in plan.prefill_requests:
+                state = self.decode_runner.prefill_request(request)
+                self.decode_states[request.request_id] = state
         prefill_seconds = prefill_timer.elapsed() if prefill_timer else 0.0
 
         decoded_tokens = {}
         decode_timer = _PhaseTimer() if self.profiler is not None else None
-        if active_states:
-            output = self.decode_runner.decode_step(active_states)
-            decoded_tokens = dict(
-                zip(output.request_ids, output.token_ids, strict=True)
-            )
+        with scope("miniserve::decode"):
+            if active_states:
+                output = self.decode_runner.decode_step(active_states)
+                decoded_tokens = dict(
+                    zip(output.request_ids, output.token_ids, strict=True)
+                )
         decode_seconds = decode_timer.elapsed() if decode_timer else 0.0
 
         # 轮末回收不做 admission；新空位下一轮再接纳，保持执行计划边界清晰。
         reclaim_timer = _PhaseTimer() if self.profiler is not None else None
-        finished = plan.finished_requests + self.scheduler.reclaim_finished()
-        for request in finished:
-            self.decode_states.pop(request.request_id, None)
+        with scope("miniserve::reclaim"):
+            finished = plan.finished_requests + self.scheduler.reclaim_finished()
+            for request in finished:
+                self.decode_states.pop(request.request_id, None)
         reclaim_seconds = reclaim_timer.elapsed() if reclaim_timer else 0.0
 
         if total_timer is not None:

@@ -89,12 +89,13 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 | Step 1–15 | 已完成 | 基础推理、KV、Engine、Scheduler、continuous batching |
 | Step 16–19 | 已完成 | Prefill/decode 共存、token budget、metrics、时间驱动 workload |
 | Step 20 | 已完成 | Engine phase profiling 与结构化 trace |
-| Step 21–24 | 待完成 | Operator/GPU profiling、benchmark、Phase A 工程与文档收尾 |
+| Step 21 | 进行中 | CPU operator trace 已完成；CUDA/Nsight trace 待 GPU 环境验证 |
+| Step 22–24 | 待完成 | GPU benchmark、Phase A 工程与文档收尾 |
 | Step 25–30 | 待完成 | Block KV、Paged KV、chunked prefill、preemption 与证据驱动优化 |
 
 当前验证基线：
 
-- 全套测试：86 passed。
+- 全套测试：89 passed。
 - `scripts/run_engine.py` 可运行完整 Engine 链路并与 Hugging Face `generate()` 对照。
 - `scripts/benchmark_serving.py` 支持 burst、constant、poisson 到达和多组调度参数比较。
 - 已有 CPU 小模型与本地 Qwen 实验结果；尚无当前 continuous-batching Engine 的正式 GPU profiling 结论。
@@ -240,7 +241,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 完成标准：产生结构化 trace，并能定位当前实现中最主要的一个或多个耗时阶段。已提供 `EngineProfiler` 和 `scripts/profile_engine.py`；CPU smoke trace 保存在 `benchmarks/results/profile_step20.json`。
 
-#### Step 21：PyTorch Profiler 与 GPU Profiling
+#### Step 21：PyTorch Profiler 与 GPU Profiling（进行中）
 
 目标：从 Engine phase 继续下钻到 operator/kernel 层。
 
@@ -251,7 +252,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - 选择关键区间进一步用 Nsight Compute 或等价工具检查 memory/compute bottleneck。
 - 将 prefill 与 decode 分开分析，避免用统一结论描述两种工作负载。
 
-完成标准：保存可复现 profiler 命令、trace 文件说明和至少一个有证据的瓶颈结论。
+完成标准：保存可复现 profiler 命令、trace 文件说明和至少一个有证据的瓶颈结论。当前已完成 PyTorch CPU trace、Engine/runner annotations 和 CUDA/Nsight 入口；由于当前 `torch.cuda.is_available()` 为 False，GPU trace 与 GPU 瓶颈结论仍待验证。
 
 #### Step 22：GPU Benchmark Matrix 与性能分析
 

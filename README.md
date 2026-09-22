@@ -78,3 +78,20 @@ Request → Scheduler → Engine → DecodeBatchRunner → Model / KV → Metric
 支持 burst、constant、poisson 到达。每种策略复用相同计划，报告包含实际提交与计划到达两种 TTFT、提交延迟、ITL、吞吐和原始样本。默认使用 CPU 小模型；本地模型加 `--model`，并把预算调整到足够容纳完整 prompt。
 
 这仍是同步 Engine 的进程内实验，不含网络。方法与边界见 [workload_benchmark.md](docs/workload_benchmark.md)。
+
+## Profiling
+
+Engine 分阶段计时：
+
+```bash
+.venv/bin/python scripts/profile_engine.py
+```
+
+PyTorch operator trace：
+
+```bash
+.venv/bin/python scripts/profile_torch.py \
+  --steps 6 --output-dir benchmarks/profiles/step21_cpu
+```
+
+有可用 NVIDIA GPU 时，使用 `--device cuda`，并可运行 `bash scripts/profile_nsys.sh ...` 生成 Nsight Systems trace。方法和边界见 [phase_profiling.md](docs/phase_profiling.md) 与 [operator_profiling.md](docs/operator_profiling.md)。

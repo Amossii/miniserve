@@ -1,0 +1,16 @@
+{
+  "device": "cpu",
+  "model": "random-tiny-llama",
+  "dtype": "torch.float32",
+  "torch": "2.14.0+cu130",
+  "activities": [
+    "CPU"
+  ],
+  "executed_steps": 6,
+  "unfinished_after_profile": true,
+  "max_running": 3,
+  "token_budget": 6,
+  "record_shapes": true,
+  "profile_memory": true,
+  "sort_by": "self_cpu_time_total"
+}

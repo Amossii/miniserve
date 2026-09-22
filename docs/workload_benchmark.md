@@ -109,6 +109,14 @@ JSON 包含环境版本、dtype、CPU 线程数、模型标识、种子、全部
 - 为什么并发 1 时，预算已经足够容纳单个 prompt，再增大预算通常不会改变执行分组？
 - 为什么吞吐接近期望输入速率时，不能直接认定系统已经达到性能上限？
 
+Step 20 的 profiling 入口是：
+
+```bash
+.venv/bin/python scripts/profile_engine.py --output benchmarks/results/profile.json
+```
+
+它只记录 Engine phase，不等同于 PyTorch operator profiler 或 Nsight trace；后者属于 Step 21。
+
 ## 本次实际运行记录（CPU）
 
 原始结果：

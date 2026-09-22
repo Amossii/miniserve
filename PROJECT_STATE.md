@@ -82,13 +82,14 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 5. 当前进度
 
-总路线为 30 步。目前完成 **19 / 30**，剩余 **11 步**。
+总路线为 30 步。目前完成 **20 / 30**，剩余 **10 步**。
 
 | 范围 | 状态 | 说明 |
 |---|---|---|
 | Step 1–15 | 已完成 | 基础推理、KV、Engine、Scheduler、continuous batching |
 | Step 16–19 | 已完成 | Prefill/decode 共存、token budget、metrics、时间驱动 workload |
-| Step 20–24 | 待完成 | Profiling、GPU benchmark、Phase A 工程与文档收尾 |
+| Step 20 | 已完成 | Engine phase profiling 与结构化 trace |
+| Step 21–24 | 待完成 | Operator/GPU profiling、benchmark、Phase A 工程与文档收尾 |
 | Step 25–30 | 待完成 | Block KV、Paged KV、chunked prefill、preemption 与证据驱动优化 |
 
 当前验证基线：
@@ -224,9 +225,9 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 完成标准：同一 workload 公平复用到不同策略；区分计划到达、实际提交和 dispatch lag；跨配置输出一致并可选 HF 对照。
 
-### Phase A5：Profiling、性能报告与公开交付（Step 20–24，待完成）
+### Phase A5：Profiling、性能报告与公开交付（Step 20–24）
 
-#### Step 20：Engine Phase Profiling
+#### Step 20：Engine Phase Profiling（已完成）
 
 目标：回答一轮 `Engine.step()` 的时间花在哪里。
 
@@ -237,7 +238,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - 将 profiling 与普通 benchmark 分开，避免 instrumentation 改变默认性能路径。
 - 输出每轮 batch size、prompt/context length、scheduled tokens 与阶段耗时。
 
-完成标准：产生结构化 trace，并能定位当前实现中最主要的一个或多个耗时阶段。
+完成标准：产生结构化 trace，并能定位当前实现中最主要的一个或多个耗时阶段。已提供 `EngineProfiler` 和 `scripts/profile_engine.py`；CPU smoke trace 保存在 `benchmarks/results/profile_step20.json`。
 
 #### Step 21：PyTorch Profiler 与 GPU Profiling
 
@@ -348,10 +349,10 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 7. 近期执行顺序
 
-下一课是 **Step 20：Engine Phase Profiling**。建议按以下顺序推进：
+下一课是 **Step 21：PyTorch Profiler 与 GPU Profiling**。建议按以下顺序推进：
 
 ```text
-Step 20 分阶段计时
+Step 20 分阶段计时（已完成）
     ↓
 Step 21 operator / kernel profiling
     ↓

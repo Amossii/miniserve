@@ -15,6 +15,7 @@ class ScheduleOutput:
     finished_requests: tuple[Request, ...]
     prefill_requests: tuple[Request, ...]
     decode_requests: tuple[Request, ...]
+    num_scheduled_tokens: int
 
     @property
     def scheduled_requests(self) -> tuple[Request, ...]:
@@ -28,18 +29,29 @@ class ScheduleOutput:
 
 
 class Scheduler:
-    """FIFO + 请求数容量；不含 token budget、chunked prefill 或抢占。"""
+    """FIFO + 请求数容量 + 可选输入 token 预算；完整 prefill，不分块、不抢占。"""
 
     def __init__(
-        self, *, max_num_running: int | None = None, max_num_seqs: int | None = None
+        self,
+        *,
+        max_num_running: int | None = None,
+        max_num_seqs: int | None = None,
+        max_num_batched_tokens: int | None = None,
     ) -> None:
-        """输入容量（二选一）；无返回；初始化队列，兼容早期 max_num_seqs 参数。"""
+        """输入容量与可选预算；无返回；初始化队列，None 保持原有无预算行为。"""
         if (max_num_running is None) == (max_num_seqs is None):
             raise ValueError("Specify exactly one capacity argument.")
         capacity = max_num_running if max_num_running is not None else max_num_seqs
         if capacity is None or capacity <= 0:
             raise ValueError("Capacity must be positive.")
+        if max_num_batched_tokens is not None:
+            if type(max_num_batched_tokens) is not int or max_num_batched_tokens <= 0:
+                raise ValueError("max_num_batched_tokens must be a positive integer.")
+            # 保障所有已有请求都能执行一次 decode，暂不引入 decode 轮转。
+            if max_num_batched_tokens < capacity:
+                raise ValueError("Token budget must be >= max_num_running.")
         self.max_num_running = capacity
+        self.max_num_batched_tokens = max_num_batched_tokens
         self.waiting: deque[Request] = deque()
         self.running: list[Request] = []
         self._finished: list[Request] = []
@@ -73,6 +85,14 @@ class Scheduler:
             raise ValueError(f"Duplicate request_id: {request.request_id}")
         if request.prompt_length <= 0 or request.max_new_tokens <= 0:
             raise ValueError("Prompt and max_new_tokens must be nonempty/positive.")
+        if (
+            self.max_num_batched_tokens is not None
+            and request.prompt_length > self.max_num_batched_tokens
+        ):
+            # 必须在入队与登记 ID 之前拒绝，避免永远无法调度的队首堵住系统。
+            raise ValueError(
+                "Prompt exceeds token budget; chunked prefill is required."
+            )
         self.waiting.append(request)
         self._request_ids.add(request.request_id)
 
@@ -88,14 +108,29 @@ class Scheduler:
         return finished
 
     def schedule(self) -> ScheduleOutput:
-        """输入队列状态；返回固定执行分组；先回收再接纳，只调度、不执行模型。"""
+        """输入队列状态；返回分组与计费快照；先预留已有工作，再按 FIFO 接纳。"""
         finished = self.reclaim_finished()
+
+        # 正常 Engine 循环中，已有 running 请求都已完成 prefill。
+        # 若调用方尚未执行上次计划，则仍需为其完整 prompt 预留预算。
+        used_tokens = sum(
+            1 if r.needs_decode else r.prompt_length for r in self.running
+        )
+        budget = self.max_num_batched_tokens
+        if budget is not None and used_tokens > budget:
+            raise RuntimeError("Existing running work exceeds token budget.")
+
         admitted = []
         while self.waiting and self.num_free_slots > 0:
-            request = self.waiting.popleft()
+            request = self.waiting[0]
+            if budget is not None and used_tokens + request.prompt_length > budget:
+                # 严格 FIFO：不跳过队首，也不提前占用 running 槽位。
+                break
             request.mark_running()
+            self.waiting.popleft()
             self.running.append(request)
             admitted.append(request)
+            used_tokens += request.prompt_length
 
         # 必须在任何 forward 之前分组：新请求本轮只走 prefill。
         return ScheduleOutput(
@@ -104,4 +139,6 @@ class Scheduler:
             finished_requests=finished,
             prefill_requests=tuple(r for r in self.running if r.needs_prefill),
             decode_requests=tuple(r for r in self.running if r.needs_decode),
+            # 保存整数快照，避免 prefill 改变 phase 后重新计算得到错误结果。
+            num_scheduled_tokens=used_tokens,
         )

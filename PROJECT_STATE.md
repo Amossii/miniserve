@@ -82,7 +82,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 5. 当前进度
 
-总路线为 30 步。目前完成 **25 / 30**，Phase A 已完成，Phase B 已进入 Block KV Cache。
+总路线为 30 步。目前完成 **26 / 30**，Phase A 已完成，Phase B 已建立 KV block 地址转换层。
 
 | 范围 | 状态 | 说明 |
 |---|---|---|
@@ -94,11 +94,12 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 | Step 23 | 已完成 | 公共 runtime 装配、正式入口边界和回归验证 |
 | Step 24 | 已完成 | Architecture、Design Decisions、Phase A Report 与面试材料 |
 | Step 25 | 已完成 | 固定大小 logical/physical block 与 metadata allocator |
-| Step 26–30 | 待完成 | Block table、Paged KV、chunked prefill、preemption 与证据驱动优化 |
+| Step 26 | 已完成 | Request block table、跨块追加、slot mapping 与 batch metadata |
+| Step 27–30 | 待完成 | Paged KV、chunked prefill、preemption 与证据驱动优化 |
 
 当前验证基线：
 
-- 全套测试：104 passed。
+- 全套测试：110 passed。
 - `scripts/run_engine.py` 可运行完整 Engine 链路并与 Hugging Face `generate()` 对照。
 - `scripts/benchmark_serving.py` 支持 burst、constant、poisson 到达和多组调度参数比较。
 - 已有 CPU smoke、RTX 4070 / Qwen2.5-0.5B GPU benchmark matrix 和 CUDA operator trace。
@@ -306,13 +307,13 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 完成标准：allocator invariants 和碎片/耗尽场景有测试；尚不要求直接接入 attention kernel。已实现固定大小 `LogicalBlock`、`PhysicalBlock`、确定性 free heap、原子多块分配/释放、request 级完整回收，以及耗尽、洞复用和非法释放测试。
 
-#### Step 26：Block Table 与 Slot Mapping
+#### Step 26：Block Table 与 Slot Mapping（已完成）
 
 目标：建立逻辑 sequence position 到物理 KV slot 的映射。
 
 计划内容：每请求 block table、追加 token 时分配、slot mapping、跨 block 边界和 batch metadata。
 
-完成标准：可手推并测试多个请求的逻辑位置、物理 block 与回收过程。
+完成标准：可手推并测试多个请求的逻辑位置、物理 block 与回收过程。已实现 request 级 `BlockTable`、跨 block 原子追加、逻辑 position 到 physical slot 的地址转换、batch row metadata，以及 release 后地址失效和资源复用测试。
 
 #### Step 27：Paged KV Cache Execution
 

@@ -430,6 +430,10 @@ class DecodeBatchRunner:
         """输入区间名；返回 record_function 或空上下文；默认路径不产生 profiler annotation。"""
         return record_function(name) if self.annotate_profiler else nullcontext()
 
+    def release_state(self, state: DecodeState) -> None:
+        """输入完成请求的 Phase A state；无返回；DynamicCache 随 state 引用移除自动释放。"""
+        del state
+
     # -----------------------------------------------------
     # 对一个 RUNNING + PREFILL Request
     # 执行独立 prefill。

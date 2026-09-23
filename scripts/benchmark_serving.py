@@ -11,7 +11,9 @@ from pathlib import Path
 import torch
 import transformers
 
+from miniserve.engine import Engine
 from miniserve.runtime import build_engine, check_reference, load_runtime
+from miniserve.scheduler import Scheduler
 from miniserve.workload import generate_workload, run_workload, validate_workload
 
 
@@ -30,6 +32,9 @@ def parse_args():
     parser.add_argument("--max-running", type=int, nargs="+", default=[3])
     parser.add_argument("--token-budgets", type=int, nargs="+")
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--kv-backend", choices=["dynamic", "paged"], default="dynamic")
+    parser.add_argument("--num-kv-blocks", type=int, default=256)
+    parser.add_argument("--kv-block-size", type=int, default=16)
     parser.add_argument("--check-reference", action="store_true")
     parser.add_argument(
         "--output", type=Path, default=Path("benchmarks/results/serving.json")
@@ -85,12 +90,22 @@ def main():
         )
     )
 
-    def new_engine(capacity, budget):
-        """输入策略；返回空 Engine；复用模型但不复用 Request、队列或 KV。"""
+    def new_engine(capacity, budget, *, runner=None):
+        """输入策略与可选预热 runner；返回空 Engine；队列/Request 隔离，可复用已清空 KV pool。"""
+        if runner is not None:
+            return Engine(
+                scheduler=Scheduler(
+                    max_num_running=capacity, max_num_batched_tokens=budget
+                ),
+                decode_runner=runner,
+            )
         return build_engine(
             runtime,
             max_running=capacity,
             token_budget=budget,
+            kv_backend=args.kv_backend,
+            num_kv_blocks=args.num_kv_blocks,
+            kv_block_size=args.kv_block_size,
         )
 
     for capacity, budget in policies:
@@ -131,13 +146,18 @@ def main():
                 arrival="burst",
                 seed=args.seed,
             )
-            run_workload(new_engine(capacity, budget), warmup_specs)
+            warmup_engine = new_engine(capacity, budget)
+            run_workload(warmup_engine, warmup_specs)
             if args.device == "cuda":
                 torch.cuda.synchronize()
                 # 输入是当前 CUDA device；输出为空；重置统计窗口但不释放模型。
                 # 这样记录的是模型常驻显存之上的本次 workload 峰值。
                 torch.cuda.reset_peak_memory_stats()
-            result = run_workload(new_engine(capacity, budget), specs)
+            # Scheduler/Request 每次重建；runner 只在完全排空后复用，使模型和
+            # paged tensor pool 都在测量窗口外完成初始化。
+            result = run_workload(
+                new_engine(capacity, budget, runner=warmup_engine.decode_runner), specs
+            )
             if args.device == "cuda":
                 # run_workload 返回前 token 已读回 CPU，但这里仍显式同步，保证
                 # allocator 统计覆盖测量窗口内提交的全部 CUDA 工作。

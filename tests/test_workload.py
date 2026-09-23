@@ -55,6 +55,10 @@ class FakeRunner:
             token_ids=(2,) * len(states),
         )
 
+    def release_state(self, state):
+        """输入完成状态；无返回；fake runner 无 KV 资源，只实现 Engine 回收契约。"""
+        del state
+
 
 @pytest.fixture
 def system(monkeypatch):

@@ -32,6 +32,9 @@ def parse_args() -> argparse.Namespace:
         "--token-budget", type=int, help="每轮输入预算；小模型默认 6，本地模型默认 256"
     )
     parser.add_argument("--max-new-tokens", type=int, default=8)
+    parser.add_argument("--kv-backend", choices=["dynamic", "paged"], default="dynamic")
+    parser.add_argument("--num-kv-blocks", type=int, default=256)
+    parser.add_argument("--kv-block-size", type=int, default=16)
     parser.add_argument(
         "--check-reference",
         action="store_true",
@@ -61,6 +64,9 @@ def main() -> None:
             runtime,
             max_running=args.max_running,
             token_budget=args.token_budget,
+            kv_backend=args.kv_backend,
+            num_kv_blocks=args.num_kv_blocks,
+            kv_block_size=args.kv_block_size,
         )
 
     warmup = new_engine()
@@ -114,7 +120,10 @@ def main() -> None:
     print(
         f"Model: {args.model or 'random tiny Llama (not meaningful text)'} | device={device}"
     )
-    print(f"max_running={args.max_running}, token_budget={args.token_budget}")
+    print(
+        f"max_running={args.max_running}, token_budget={args.token_budget}, "
+        f"kv_backend={args.kv_backend}"
+    )
     for index, output, used, waiting in traces:
         print(
             f"step={index:02d} prefill={output.newly_prefilled} "

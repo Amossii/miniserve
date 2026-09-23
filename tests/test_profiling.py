@@ -26,6 +26,10 @@ class Runner:
             token_ids=(2,) * len(states),
         )
 
+    def release_state(self, state):
+        """输入完成状态；无返回；fake state 不持有资源，满足 Engine runner 生命周期接口。"""
+        del state
+
 
 def test_engine_phase_profile_captures_work_and_sums_phases():
     """输入带 profiler 的 Engine；无返回；验证两轮 phase、工作量和累计记录。"""

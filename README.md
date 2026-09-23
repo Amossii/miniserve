@@ -17,7 +17,7 @@ flowchart LR
 
 核心目标是解释真实 serving 系统的控制流、KV 生命周期和性能取舍，而不是包装一个聊天 API。完整架构与 invariant 见 [architecture.md](docs/architecture.md)。
 
-Phase B 已实现固定大小 KV block allocator，以及请求级 block table/slot mapping；设计见 [block_allocator.md](docs/block_allocator.md) 和 [block_table.md](docs/block_table.md)。当前 continuous inference 仍使用 Phase A per-request DynamicCache，待 paged execution 完成后再切换。
+Phase B 已实现固定大小 KV block allocator、请求级 block table/slot mapping，以及可选的 paged KV storage + Hugging Face gather adapter；设计见 [block_allocator.md](docs/block_allocator.md)、[block_table.md](docs/block_table.md) 和 [paged_kv.md](docs/paged_kv.md)。Paged backend 已接入真实 Engine，但因 HF attention 仍需 gather/cat，GPU A/B 中没有获得性能提升。
 
 ## 功能
 

@@ -3,10 +3,11 @@ from __future__ import annotations
 from contextlib import nullcontext
 from dataclasses import dataclass
 from time import perf_counter
+from typing import Any
 
 from torch.profiler import record_function
 
-from miniserve.decode_batch import DecodeBatchRunner, DecodeState
+from miniserve.decode_batch import DecodeBatchRunner
 from miniserve.profiling import EngineProfiler, StepProfile, _PhaseTimer
 from miniserve.request import Request
 from miniserve.scheduler import Scheduler
@@ -36,7 +37,7 @@ class Engine:
         """输入调度器、执行器和可选 profiler；无返回；建立 KV 索引与 iteration 计数。"""
         self.scheduler = scheduler
         self.decode_runner = decode_runner
-        self.decode_states: dict[str, DecodeState] = {}
+        self.decode_states: dict[str, Any] = {}
         self.profiler = profiler
         self.annotate_profiler = annotate_profiler
         self.iteration = 0
@@ -62,7 +63,9 @@ class Engine:
             plan = self.scheduler.schedule()
         scheduler_seconds = scheduler_timer.elapsed() if scheduler_timer else 0.0
         for request in plan.finished_requests:
-            self.decode_states.pop(request.request_id, None)
+            state = self.decode_states.pop(request.request_id, None)
+            if state is not None:
+                self.decode_runner.release_state(state)
 
         # 在执行任何 prefill 前检查已有 decode 状态，缺失时不能静默跳过。
         active_states = []
@@ -93,7 +96,9 @@ class Engine:
         with scope("miniserve::reclaim"):
             finished = plan.finished_requests + self.scheduler.reclaim_finished()
             for request in finished:
-                self.decode_states.pop(request.request_id, None)
+                state = self.decode_states.pop(request.request_id, None)
+                if state is not None:
+                    self.decode_runner.release_state(state)
         reclaim_seconds = reclaim_timer.elapsed() if reclaim_timer else 0.0
 
         if total_timer is not None:

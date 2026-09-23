@@ -142,17 +142,35 @@ def build_engine(
     token_budget: int,
     profiler: EngineProfiler | None = None,
     annotate_profiler: bool = False,
+    kv_backend: str = "dynamic",
+    num_kv_blocks: int = 256,
+    kv_block_size: int = 16,
 ) -> Engine:
-    """输入共享模型和调度配置；返回全新 Engine；队列、runner 和 KV 状态互相隔离。"""
+    """输入共享模型、调度和 KV backend；返回全新 Engine；队列、runner 与 KV 状态隔离。"""
     validate_engine_limits(bundle.prompts, max_running, token_budget)
-    runner = DecodeBatchRunner(
-        model=bundle.model,
-        device=bundle.device,
-        eos_token_ids=normalize_eos_token_ids(
-            bundle.model.generation_config.eos_token_id
-        ),
-        annotate_profiler=annotate_profiler,
+    eos_token_ids = normalize_eos_token_ids(
+        bundle.model.generation_config.eos_token_id
     )
+    if kv_backend == "dynamic":
+        runner = DecodeBatchRunner(
+            model=bundle.model,
+            device=bundle.device,
+            eos_token_ids=eos_token_ids,
+            annotate_profiler=annotate_profiler,
+        )
+    elif kv_backend == "paged":
+        from miniserve.paged_kv import PagedDecodeBatchRunner
+
+        runner = PagedDecodeBatchRunner(
+            model=bundle.model,
+            device=bundle.device,
+            eos_token_ids=eos_token_ids,
+            num_blocks=num_kv_blocks,
+            block_size=kv_block_size,
+            annotate_profiler=annotate_profiler,
+        )
+    else:
+        raise ValueError("kv_backend must be 'dynamic' or 'paged'")
     return Engine(
         scheduler=Scheduler(
             max_num_running=max_running,

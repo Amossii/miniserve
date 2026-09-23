@@ -7,6 +7,20 @@ from miniserve.request import Request
 
 
 @dataclass(frozen=True)
+class PrefillChunk:
+    """一轮 prefill 工作快照；start/end 是 prompt token 的左闭右开区间。"""
+
+    request: Request
+    start: int
+    end: int
+
+    @property
+    def num_tokens(self) -> int:
+        """输入自身；返回本 chunk token 数；只读，供预算验证和 profiler 使用。"""
+        return self.end - self.start
+
+
+@dataclass(frozen=True)
 class ScheduleOutput:
     """调度时固定两组成员；Request 可变，但本轮不再按变化后的 phase 重新分组。"""
 
@@ -14,6 +28,7 @@ class ScheduleOutput:
     running_requests: tuple[Request, ...]
     finished_requests: tuple[Request, ...]
     prefill_requests: tuple[Request, ...]
+    prefill_chunks: tuple[PrefillChunk, ...]
     decode_requests: tuple[Request, ...]
     num_scheduled_tokens: int
 
@@ -37,6 +52,7 @@ class Scheduler:
         max_num_running: int | None = None,
         max_num_seqs: int | None = None,
         max_num_batched_tokens: int | None = None,
+        enable_chunked_prefill: bool = False,
     ) -> None:
         """输入容量与可选预算；无返回；初始化队列，None 保持原有无预算行为。"""
         if (max_num_running is None) == (max_num_seqs is None):
@@ -52,6 +68,7 @@ class Scheduler:
                 raise ValueError("Token budget must be >= max_num_running.")
         self.max_num_running = capacity
         self.max_num_batched_tokens = max_num_batched_tokens
+        self.enable_chunked_prefill = enable_chunked_prefill
         self.waiting: deque[Request] = deque()
         self.running: list[Request] = []
         self._finished: list[Request] = []
@@ -86,7 +103,8 @@ class Scheduler:
         if request.prompt_length <= 0 or request.max_new_tokens <= 0:
             raise ValueError("Prompt and max_new_tokens must be nonempty/positive.")
         if (
-            self.max_num_batched_tokens is not None
+            not self.enable_chunked_prefill
+            and self.max_num_batched_tokens is not None
             and request.prompt_length > self.max_num_batched_tokens
         ):
             # 必须在入队与登记 ID 之前拒绝，避免永远无法调度的队首堵住系统。
@@ -110,6 +128,9 @@ class Scheduler:
     def schedule(self) -> ScheduleOutput:
         """输入队列状态；返回分组与计费快照；先预留已有工作，再按 FIFO 接纳。"""
         finished = self.reclaim_finished()
+
+        if self.enable_chunked_prefill:
+            return self._schedule_with_chunked_prefill(finished)
 
         # 正常 Engine 循环中，已有 running 请求都已完成 prefill。
         # 若调用方尚未执行上次计划，则仍需为其完整 prompt 预留预算。
@@ -138,7 +159,65 @@ class Scheduler:
             running_requests=tuple(self.running),
             finished_requests=finished,
             prefill_requests=tuple(r for r in self.running if r.needs_prefill),
+            prefill_chunks=tuple(
+                PrefillChunk(r, r.num_prefilled_tokens, r.prompt_length)
+                for r in self.running
+                if r.needs_prefill
+            ),
             decode_requests=tuple(r for r in self.running if r.needs_decode),
             # 保存整数快照，避免 prefill 改变 phase 后重新计算得到错误结果。
+            num_scheduled_tokens=used_tokens,
+        )
+
+    def _schedule_with_chunked_prefill(
+        self, finished: tuple[Request, ...]
+    ) -> ScheduleOutput:
+        """输入轮首回收项；返回 decode-priority chunk 计划；推进由执行器完成而非调度器预写。"""
+        budget = self.max_num_batched_tokens
+        if budget is None:
+            raise RuntimeError("Chunked prefill requires a finite token budget")
+        decode_requests = tuple(r for r in self.running if r.needs_decode)
+        used_tokens = len(decode_requests)
+        if used_tokens > budget:
+            raise RuntimeError("Existing decode work exceeds token budget")
+        chunks: list[PrefillChunk] = []
+
+        def schedule_chunk(request: Request) -> bool:
+            """输入 partial request；返回是否安排了非空 chunk；只更新本轮局部计划。"""
+            nonlocal used_tokens
+            available = budget - used_tokens
+            if available <= 0:
+                return False
+            length = min(request.remaining_prompt_tokens, available)
+            chunks.append(
+                PrefillChunk(
+                    request,
+                    request.num_prefilled_tokens,
+                    request.num_prefilled_tokens + length,
+                )
+            )
+            used_tokens += length
+            return True
+
+        # 已接纳的 partial prefill 保持 FIFO running 顺序，且排在新 admission 前。
+        for request in self.running:
+            if request.needs_prefill and not schedule_chunk(request):
+                break
+
+        admitted: list[Request] = []
+        while self.waiting and self.num_free_slots > 0 and used_tokens < budget:
+            request = self.waiting.popleft()
+            request.mark_running()
+            self.running.append(request)
+            admitted.append(request)
+            schedule_chunk(request)
+
+        return ScheduleOutput(
+            newly_admitted=tuple(admitted),
+            running_requests=tuple(self.running),
+            finished_requests=finished,
+            prefill_requests=tuple(chunk.request for chunk in chunks),
+            prefill_chunks=tuple(chunks),
+            decode_requests=decode_requests,
             num_scheduled_tokens=used_tokens,
         )

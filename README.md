@@ -19,6 +19,8 @@ flowchart LR
 
 Phase B 已实现固定大小 KV block allocator、请求级 block table/slot mapping，以及可选的 paged KV storage + Hugging Face gather adapter；设计见 [block_allocator.md](docs/block_allocator.md)、[block_table.md](docs/block_table.md) 和 [paged_kv.md](docs/paged_kv.md)。Paged backend 已接入真实 Engine，但因 HF attention 仍需 gather/cat，GPU A/B 中没有获得性能提升。
 
+Dynamic KV backend 支持显式 `--chunked-prefill`：长 prompt 可跨轮处理，decode 请求优先占用 token budget。设计、限制和负性能实验见 [chunked_prefill.md](docs/chunked_prefill.md)。
+
 ## 功能
 
 - WAITING → RUNNING → FINISHED 请求状态机与 PREFILL → DECODE 阶段。

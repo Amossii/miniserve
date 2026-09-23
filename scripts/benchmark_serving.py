@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument("--kv-backend", choices=["dynamic", "paged"], default="dynamic")
     parser.add_argument("--num-kv-blocks", type=int, default=256)
     parser.add_argument("--kv-block-size", type=int, default=16)
+    parser.add_argument("--chunked-prefill", action="store_true")
     parser.add_argument("--check-reference", action="store_true")
     parser.add_argument(
         "--output", type=Path, default=Path("benchmarks/results/serving.json")
@@ -95,7 +96,9 @@ def main():
         if runner is not None:
             return Engine(
                 scheduler=Scheduler(
-                    max_num_running=capacity, max_num_batched_tokens=budget
+                    max_num_running=capacity,
+                    max_num_batched_tokens=budget,
+                    enable_chunked_prefill=args.chunked_prefill,
                 ),
                 decode_runner=runner,
             )
@@ -106,6 +109,7 @@ def main():
             kv_backend=args.kv_backend,
             num_kv_blocks=args.num_kv_blocks,
             kv_block_size=args.kv_block_size,
+            enable_chunked_prefill=args.chunked_prefill,
         )
 
     for capacity, budget in policies:

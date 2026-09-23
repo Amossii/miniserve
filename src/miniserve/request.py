@@ -35,6 +35,7 @@ class Request:
     start_time: float | None = None
     finish_time: float | None = None
     prefill_completed: bool = False
+    num_prefilled_tokens: int = 0
     first_token_time: float | None = None
     token_timestamps: list[float] = field(default_factory=list)
 
@@ -86,6 +87,11 @@ class Request:
         return not self.prefill_completed and not self.is_finished
 
     @property
+    def remaining_prompt_tokens(self) -> int:
+        """输入自身；返回尚未写入 prefill KV 的 prompt token 数；只读，支持 chunk 调度。"""
+        return self.prompt_length - self.num_prefilled_tokens
+
+    @property
     def reached_max_new_tokens(self) -> bool:
         """输入自身；返回是否达到生成上限；只读，统一停止条件。"""
         return self.num_generated_tokens >= self.max_new_tokens
@@ -101,7 +107,20 @@ class Request:
         """输入自身；无返回；更新阶段，拒绝未接纳或重复 prefill。"""
         if not self.is_running or self.prefill_completed:
             raise RuntimeError("Request must be RUNNING and need PREFILL.")
+        self.num_prefilled_tokens = self.prompt_length
         self.prefill_completed = True
+
+    def advance_prefill(self, num_tokens: int) -> None:
+        """输入本轮完成的 prompt token 数；无返回；推进 cursor，到达末尾时切换 DECODE。"""
+        if not self.is_running or not self.needs_prefill:
+            raise RuntimeError("Request must be RUNNING and need PREFILL.")
+        if type(num_tokens) is not int or num_tokens <= 0:
+            raise ValueError("num_tokens must be a positive integer")
+        if num_tokens > self.remaining_prompt_tokens:
+            raise ValueError("Prefill progress cannot exceed prompt length")
+        self.num_prefilled_tokens += num_tokens
+        if self.num_prefilled_tokens == self.prompt_length:
+            self.prefill_completed = True
 
     def append_generated_token(
         self, token_id: int, *, timestamp: float | None = None

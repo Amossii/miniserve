@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kv-backend", choices=["dynamic", "paged"], default="dynamic")
     parser.add_argument("--num-kv-blocks", type=int, default=256)
     parser.add_argument("--kv-block-size", type=int, default=16)
+    parser.add_argument("--chunked-prefill", action="store_true")
     parser.add_argument(
         "--check-reference",
         action="store_true",
@@ -56,7 +57,12 @@ def main() -> None:
     runtime = load_runtime(args.model, args.device)
     tokenizer, prompts = runtime.tokenizer, runtime.prompts
     device = runtime.device
-    validate_engine_limits(prompts, args.max_running, args.token_budget)
+    validate_engine_limits(
+        prompts,
+        args.max_running,
+        args.token_budget,
+        enable_chunked_prefill=args.chunked_prefill,
+    )
 
     def new_engine() -> Engine:
         """输入无；返回空 Engine；复用模型但隔离队列和 KV，避免预热污染测量。"""
@@ -67,6 +73,7 @@ def main() -> None:
             kv_backend=args.kv_backend,
             num_kv_blocks=args.num_kv_blocks,
             kv_block_size=args.kv_block_size,
+            enable_chunked_prefill=args.chunked_prefill,
         )
 
     warmup = new_engine()
@@ -89,7 +96,6 @@ def main() -> None:
         for name, prompt, length in zip("ABCD", prompts, lengths, strict=True)
     ]
     arrivals = [(0, requests[0]), (1, requests[1]), (1, requests[2]), (2, requests[3])]
-    by_id = {r.request_id: r for r in requests}
     engine = new_engine()
     traces = []
     cursor = iteration = 0
@@ -99,7 +105,7 @@ def main() -> None:
             engine.add_request(arrivals[cursor][1])
             cursor += 1
         result = engine.step()
-        used = sum(by_id[rid].prompt_length for rid in result.newly_prefilled) + len(
+        used = sum(end - start for _, start, end in result.prefill_chunks) + len(
             result.decoded_tokens
         )
         assert used <= args.token_budget
@@ -122,11 +128,11 @@ def main() -> None:
     )
     print(
         f"max_running={args.max_running}, token_budget={args.token_budget}, "
-        f"kv_backend={args.kv_backend}"
+            f"kv_backend={args.kv_backend}, chunked_prefill={args.chunked_prefill}"
     )
     for index, output, used, waiting in traces:
         print(
-            f"step={index:02d} prefill={output.newly_prefilled} "
+            f"step={index:02d} prefill={output.prefill_chunks} "
             f"decode={tuple(output.decoded_tokens)} tokens={used}/{args.token_budget} "
             f"waiting={waiting} running={output.running_requests} finished={output.finished_requests}"
         )

@@ -542,6 +542,68 @@ class DecodeBatchRunner:
 
         return state
 
+    @torch.inference_mode()
+    def prefill_chunk(
+        self,
+        request: Request,
+        state: DecodeState | None,
+        *,
+        start: int,
+        end: int,
+    ) -> DecodeState:
+        """输入 request、可选 partial state 和区间；返回更新 state；仅末 chunk 产生首 token。"""
+        if not request.is_running or not request.needs_prefill:
+            raise RuntimeError("Request must be RUNNING and need PREFILL")
+        if start != request.num_prefilled_tokens or not start < end <= request.prompt_length:
+            raise ValueError("Prefill chunk must start at current cursor and stay in prompt")
+        if state is None:
+            if start != 0:
+                raise RuntimeError("First prefill chunk must start at zero")
+            cache = DynamicCache(config=self.model.config)
+        else:
+            if state.request is not request or cache_length(state.cache) != start:
+                raise RuntimeError("Partial DecodeState does not match prefill cursor")
+            cache = state.cache
+
+        input_ids = torch.tensor(
+            [request.prompt_token_ids[start:end]], dtype=torch.long, device=self.device
+        )
+        attention_mask = torch.ones(
+            (1, end), dtype=torch.long, device=self.device
+        )
+        position_ids = torch.arange(
+            start, end, dtype=torch.long, device=self.device
+        ).unsqueeze(0)
+        cache_position = torch.arange(start, end, dtype=torch.long, device=self.device)
+        with self._profile_scope("miniserve::prefill_model_forward"):
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                cache_position=cache_position,
+                past_key_values=cache,
+                use_cache=True,
+            )
+        updated_state = DecodeState(request=request, cache=outputs.past_key_values)
+        request.advance_prefill(end - start)
+
+        # 中间 chunk 只扩展 prompt KV；首 token 必须等最后一个 prompt token 执行后产生。
+        if request.needs_prefill:
+            if cache_length(updated_state.cache) != request.num_prefilled_tokens:
+                raise RuntimeError("Partial prefill cache length differs from cursor")
+            return updated_state
+
+        next_token_id = int(torch.argmax(outputs.logits[:, -1, :], dim=-1).item())
+        timestamp = time.perf_counter()
+        request.append_generated_token(next_token_id, timestamp=timestamp)
+        if next_token_id in self.eos_token_ids or request.reached_max_new_tokens:
+            request.mark_finished(timestamp=timestamp)
+        if not request.is_finished and request.sequence_length != cache_length(
+            updated_state.cache
+        ) + 1:
+            raise RuntimeError("Final chunk violated decode cache invariant")
+        return updated_state
+
     # -----------------------------------------------------
     # 对多个 heterogeneous Request 执行一次 batched decode。
     #

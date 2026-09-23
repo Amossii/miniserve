@@ -105,7 +105,11 @@ def validate_workload(specs: Sequence[RequestSpec], engine: Engine) -> None:
         if not spec.prompt_token_ids or spec.max_new_tokens <= 0:
             raise ValueError("Prompt and output limit must be positive.")
         budget = scheduler.max_num_batched_tokens
-        if budget is not None and len(spec.prompt_token_ids) > budget:
+        if (
+            budget is not None
+            and len(spec.prompt_token_ids) > budget
+            and not scheduler.enable_chunked_prefill
+        ):
             raise ValueError(
                 "Prompt exceeds token budget; increase budget before running."
             )

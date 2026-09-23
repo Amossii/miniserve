@@ -120,7 +120,11 @@ def resolve_token_budget(model_path: str | None, explicit_budget: int | None) ->
 
 
 def validate_engine_limits(
-    prompts: list[list[int]], max_running: int, token_budget: int
+    prompts: list[list[int]],
+    max_running: int,
+    token_budget: int,
+    *,
+    enable_chunked_prefill: bool = False,
 ) -> None:
     """输入 prompt 与调度限制；无返回；验证当前不支持拆分 prefill 的必要约束。"""
     if max_running <= 0 or token_budget < max_running:
@@ -128,7 +132,7 @@ def validate_engine_limits(
     if not prompts or any(not prompt for prompt in prompts):
         raise ValueError("prompts must be non-empty")
     longest = max(map(len, prompts))
-    if longest > token_budget:
+    if longest > token_budget and not enable_chunked_prefill:
         raise ValueError(
             f"Longest prompt has {longest} tokens; increase token budget "
             "because full prefill cannot be split."
@@ -145,9 +149,17 @@ def build_engine(
     kv_backend: str = "dynamic",
     num_kv_blocks: int = 256,
     kv_block_size: int = 16,
+    enable_chunked_prefill: bool = False,
 ) -> Engine:
     """输入共享模型、调度和 KV backend；返回全新 Engine；队列、runner 与 KV 状态隔离。"""
-    validate_engine_limits(bundle.prompts, max_running, token_budget)
+    validate_engine_limits(
+        bundle.prompts,
+        max_running,
+        token_budget,
+        enable_chunked_prefill=enable_chunked_prefill,
+    )
+    if enable_chunked_prefill and kv_backend == "paged":
+        raise ValueError("Chunked prefill currently supports only the dynamic KV backend")
     eos_token_ids = normalize_eos_token_ids(
         bundle.model.generation_config.eos_token_id
     )
@@ -175,6 +187,7 @@ def build_engine(
         scheduler=Scheduler(
             max_num_running=max_running,
             max_num_batched_tokens=token_budget,
+            enable_chunked_prefill=enable_chunked_prefill,
         ),
         decode_runner=runner,
         profiler=profiler,

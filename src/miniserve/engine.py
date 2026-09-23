@@ -21,6 +21,7 @@ class EngineStepOutput:
     decoded_tokens: dict[str, int]
     finished_requests: tuple[str, ...]
     running_requests: tuple[str, ...]
+    prefill_chunks: tuple[tuple[str, int, int], ...] = ()
 
 
 class Engine:
@@ -76,8 +77,18 @@ class Engine:
 
         prefill_timer = _PhaseTimer() if self.profiler is not None else None
         with scope("miniserve::prefill"):
-            for request in plan.prefill_requests:
-                state = self.decode_runner.prefill_request(request)
+            for chunk in plan.prefill_chunks:
+                request = chunk.request
+                existing_state = self.decode_states.get(request.request_id)
+                if chunk.start == 0 and chunk.end == request.prompt_length:
+                    state = self.decode_runner.prefill_request(request)
+                else:
+                    state = self.decode_runner.prefill_chunk(
+                        request,
+                        existing_state,
+                        start=chunk.start,
+                        end=chunk.end,
+                    )
                 self.decode_states[request.request_id] = state
         prefill_seconds = prefill_timer.elapsed() if prefill_timer else 0.0
 
@@ -112,7 +123,7 @@ class Engine:
                 num_running=len(plan.running_requests),
                 num_prefill=len(plan.prefill_requests),
                 num_decode=len(plan.decode_requests),
-                prefill_tokens=sum(r.prompt_length for r in plan.prefill_requests),
+                prefill_tokens=sum(chunk.num_tokens for chunk in plan.prefill_chunks),
                 decode_tokens=len(plan.decode_requests),
                 scheduled_tokens=plan.num_scheduled_tokens,
             )
@@ -124,4 +135,8 @@ class Engine:
             decoded_tokens=decoded_tokens,
             finished_requests=tuple(r.request_id for r in finished),
             running_requests=tuple(r.request_id for r in self.scheduler.running),
+            prefill_chunks=tuple(
+                (chunk.request.request_id, chunk.start, chunk.end)
+                for chunk in plan.prefill_chunks
+            ),
         )

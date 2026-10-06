@@ -1,5 +1,7 @@
 # MiniServe 面试表达与简历材料
 
+完整的架构图、技术细节、设计取舍和 35 个问答见 `docs/interview_handbook.md`。本文保留适合快速准备的简历表达。
+
 ## 30 秒项目介绍
 
 MiniServe 是我从零实现的简化 LLM continuous-batching inference engine。它支持 Request 状态机、prefill/decode 共存、不同 context length 的 batched decode、per-request KV Cache、FIFO admission 和 token-budget scheduling。我还建立了 TTFT/ITL/TPOT 指标、时间驱动 workload、GPU benchmark 与 PyTorch profiler 链路，并用 Hugging Face reference 验证跨策略 token 一致性。
@@ -7,9 +9,9 @@ MiniServe 是我从零实现的简化 LLM continuous-batching inference engine�
 ## 简历 bullet
 
 - 从零实现 continuous-batching LLM inference engine，拆分 Scheduler、Engine 与 Model Runner，支持动态请求接纳、prefill/decode 共存、异长 context batched decode 和 token-budget scheduling。
-- 构建 per-request KV Cache pack/unpack 生命周期与完整 correctness suite，通过 Hugging Face greedy generation 和跨调度策略逐 token 对照验证，项目回归覆盖 94 个测试。
+- 构建 per-request 与 paged KV Cache 生命周期、chunked prefill 和 preemption/recompute，通过 Hugging Face greedy generation 和跨调度策略逐 token 对照验证，项目回归覆盖 118 个测试。
 - 建立 TTFT、ITL、TPOT、E2E、吞吐与峰值显存 benchmark；在 RTX 4070 / Qwen2.5-0.5B burst workload 上，capacity 4 相对串行基线将吞吐中位数提高约 88%、TTFT P50 降低约 60%。
-- 使用 PyTorch Profiler 标注 prefill、decode、KV pack/unpack，观察到 3035 次 `aten::cat` 和约 59 MiB allocator activity，据此规划 block/paged KV 优化路径。
+- 使用 PyTorch Profiler 定位 3035 次 `aten::cat` 和约 59 MiB allocator activity；完成 direct-copy A/B，发现吞吐中位数下降 20.0% 后回退方案，保留原始实验与限制分析。
 
 数字必须与 `docs/phase_a_report.md` 的固定实验配置一起陈述，不能泛化成所有模型、输入长度或 GPU 上的收益。
 
@@ -33,7 +35,7 @@ MiniServe 是我从零实现的简化 LLM continuous-batching inference engine�
 
 ### 当前最明显的架构瓶颈是什么？
 
-异长 decode 通过每轮 padding/cat 把 per-request KV 组成 batch，forward 后再 slice/unpack。它正确且易懂，但产生额外 copy、allocation 和小 kernel；CUDA trace 已观察到高频 `aten::cat`。Phase B 用 block table 和 paged KV 解决这一点。
+异长 decode 通过每轮 padding/cat 把 per-request KV 组成 batch，forward 后再 slice/unpack。Paged backend 改善了长期 KV ownership，但 HF attention 仍要求 gather 为连续 cache，因此没有消除这项成本。direct-copy 实验又说明，把 cat 换成许多细粒度 copy kernel 也不会自动提速；真正的下一步是 fused pack 或直接消费 block table 的 attention kernel。
 
 ### 这个 benchmark 有什么局限？
 

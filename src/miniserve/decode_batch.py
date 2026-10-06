@@ -434,6 +434,30 @@ class DecodeBatchRunner:
         """输入完成请求的 Phase A state；无返回；DynamicCache 随 state 引用移除自动释放。"""
         del state
 
+    @torch.inference_mode()
+    def recompute_request(self, request: Request) -> DecodeState:
+        """输入 RUNNING/RECOMPUTE 请求；返回重建 cache；保留输出 token 和时间戳且不生成新 token。"""
+        if not request.is_running or not request.needs_recompute:
+            raise RuntimeError("Request must be RUNNING and require recompute")
+        token_ids = request.recompute_token_ids
+        input_ids = torch.tensor([token_ids], dtype=torch.long, device=self.device)
+        positions = torch.arange(len(token_ids), dtype=torch.long, device=self.device)
+        cache = DynamicCache(config=self.model.config)
+        with self._profile_scope("miniserve::recompute_model_forward"):
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=torch.ones_like(input_ids),
+                position_ids=positions.unsqueeze(0),
+                cache_position=positions,
+                past_key_values=cache,
+                use_cache=True,
+            )
+        state = DecodeState(request=request, cache=outputs.past_key_values)
+        if cache_length(state.cache) != len(token_ids):
+            raise RuntimeError("Recomputed cache length differs from logical context")
+        request.mark_recomputed()
+        return state
+
     # -----------------------------------------------------
     # 对一个 RUNNING + PREFILL Request
     # 执行独立 prefill。

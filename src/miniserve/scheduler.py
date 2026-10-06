@@ -29,6 +29,7 @@ class ScheduleOutput:
     finished_requests: tuple[Request, ...]
     prefill_requests: tuple[Request, ...]
     prefill_chunks: tuple[PrefillChunk, ...]
+    recompute_requests: tuple[Request, ...]
     decode_requests: tuple[Request, ...]
     num_scheduled_tokens: int
 
@@ -53,6 +54,7 @@ class Scheduler:
         max_num_seqs: int | None = None,
         max_num_batched_tokens: int | None = None,
         enable_chunked_prefill: bool = False,
+        max_preemptions: int = 3,
     ) -> None:
         """输入容量与可选预算；无返回；初始化队列，None 保持原有无预算行为。"""
         if (max_num_running is None) == (max_num_seqs is None):
@@ -69,6 +71,9 @@ class Scheduler:
         self.max_num_running = capacity
         self.max_num_batched_tokens = max_num_batched_tokens
         self.enable_chunked_prefill = enable_chunked_prefill
+        if type(max_preemptions) is not int or max_preemptions <= 0:
+            raise ValueError("max_preemptions must be a positive integer")
+        self.max_preemptions = max_preemptions
         self.waiting: deque[Request] = deque()
         self.running: list[Request] = []
         self._finished: list[Request] = []
@@ -125,6 +130,22 @@ class Scheduler:
         self._finished.extend(finished)
         return finished
 
+    def preempt_request(self, request: Request) -> None:
+        """输入 active decode victim；无返回；移出 running 并追加 waiting 队尾，保留 FIFO 进展。"""
+        if request not in self.running:
+            raise ValueError("Preemption victim must be running")
+        if request.num_preemptions >= self.max_preemptions:
+            raise RuntimeError("Request exceeded maximum preemptions")
+        recompute_tokens = len(request.recompute_token_ids)
+        if (
+            self.max_num_batched_tokens is not None
+            and recompute_tokens > self.max_num_batched_tokens
+        ):
+            raise RuntimeError("Recompute context exceeds token budget")
+        request.preempt_for_recompute()
+        self.running.remove(request)
+        self.waiting.append(request)
+
     def schedule(self) -> ScheduleOutput:
         """输入队列状态；返回分组与计费快照；先预留已有工作，再按 FIFO 接纳。"""
         finished = self.reclaim_finished()
@@ -135,7 +156,12 @@ class Scheduler:
         # 正常 Engine 循环中，已有 running 请求都已完成 prefill。
         # 若调用方尚未执行上次计划，则仍需为其完整 prompt 预留预算。
         used_tokens = sum(
-            1 if r.needs_decode else r.prompt_length for r in self.running
+            1
+            if r.needs_decode
+            else len(r.recompute_token_ids)
+            if r.needs_recompute
+            else r.prompt_length
+            for r in self.running
         )
         budget = self.max_num_batched_tokens
         if budget is not None and used_tokens > budget:
@@ -144,14 +170,19 @@ class Scheduler:
         admitted = []
         while self.waiting and self.num_free_slots > 0:
             request = self.waiting[0]
-            if budget is not None and used_tokens + request.prompt_length > budget:
+            request_tokens = (
+                len(request.recompute_token_ids)
+                if request.needs_recompute
+                else request.prompt_length
+            )
+            if budget is not None and used_tokens + request_tokens > budget:
                 # 严格 FIFO：不跳过队首，也不提前占用 running 槽位。
                 break
             request.mark_running()
             self.waiting.popleft()
             self.running.append(request)
             admitted.append(request)
-            used_tokens += request.prompt_length
+            used_tokens += request_tokens
 
         # 必须在任何 forward 之前分组：新请求本轮只走 prefill。
         return ScheduleOutput(
@@ -164,6 +195,7 @@ class Scheduler:
                 for r in self.running
                 if r.needs_prefill
             ),
+            recompute_requests=tuple(r for r in self.running if r.needs_recompute),
             decode_requests=tuple(r for r in self.running if r.needs_decode),
             # 保存整数快照，避免 prefill 改变 phase 后重新计算得到错误结果。
             num_scheduled_tokens=used_tokens,
@@ -176,6 +208,9 @@ class Scheduler:
         budget = self.max_num_batched_tokens
         if budget is None:
             raise RuntimeError("Chunked prefill requires a finite token budget")
+        if any(r.needs_recompute for r in (*self.running, *self.waiting)):
+            # 当前 runtime 只支持 dynamic + chunked；recompute 属于 paged backend。
+            raise RuntimeError("Chunked prefill cannot schedule recompute requests")
         decode_requests = tuple(r for r in self.running if r.needs_decode)
         used_tokens = len(decode_requests)
         if used_tokens > budget:
@@ -218,6 +253,7 @@ class Scheduler:
             finished_requests=finished,
             prefill_requests=tuple(chunk.request for chunk in chunks),
             prefill_chunks=tuple(chunks),
+            recompute_requests=(),
             decode_requests=decode_requests,
             num_scheduled_tokens=used_tokens,
         )

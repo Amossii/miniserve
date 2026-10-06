@@ -293,6 +293,20 @@ class PagedDecodeBatchRunner(DecodeBatchRunner):
         )
 
     @torch.inference_mode()
+    def recompute_request(self, request: Request) -> PagedDecodeState:
+        """输入已重新接纳 victim；返回 paged state；先重建连续 cache，再写入新 physical blocks。"""
+        required_blocks = (
+            len(request.recompute_token_ids) + self.allocator.block_size - 1
+        ) // self.allocator.block_size
+        if not self.allocator.can_allocate(required_blocks):
+            raise BlockCapacityError("Insufficient KV blocks for recompute")
+        dynamic_state = super().recompute_request(request)
+        table = BlockTable(request.request_id, self.allocator)
+        table.append_tokens(cache_length(dynamic_state.cache))
+        self.storage.write_cache(table, dynamic_state.cache)
+        return PagedDecodeState(request=request, block_table=table)
+
+    @torch.inference_mode()
     def release_state(self, state: PagedDecodeState) -> None:
         """输入完成请求的 paged state；无返回；清零并归还其全部 physical blocks。"""
         block_ids = state.block_table.physical_block_ids

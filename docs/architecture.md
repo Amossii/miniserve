@@ -57,13 +57,15 @@ Request C KV [layers, heads, 18, dim] ─┘                  │
                                      slice/unpack → per-request KV
 ```
 
-这种实现易于验证 heterogeneous decode correctness，但每轮会产生 padding、copy、`aten::cat` 和新 tensor allocation。Phase B 将用 block allocator、block table 和 paged KV 路径替换这部分数据搬运。
+这种实现易于验证 heterogeneous decode correctness，但每轮会产生 padding、copy、`aten::cat` 和新 tensor allocation。Paged backend 已把长期 ownership 改为 block pool，但由于 HF attention 仍要求连续 cache，forward 前仍需 gather/pack；它是教学 adapter，不是 fused PagedAttention。
+
+当前支持两条独立的高级路径：dynamic backend 支持 chunked prefill；paged backend 支持 block capacity preemption 与 recompute。runtime 暂不组合 paged KV 和 chunked prefill。
 
 ## 关键 invariant
 
-- Request ID 全局唯一，状态只能按 WAITING → RUNNING → FINISHED 前进。
+- Request ID 全局唯一；正常路径为 WAITING → RUNNING → FINISHED，paged victim 可从 RUNNING/DECODE 返回 WAITING/RECOMPUTE。
 - 一轮调度输入 token 数不超过 `max_num_batched_tokens`。
-- 当前完整 prefill 不拆分，因此单个 prompt 必须能放入 token budget。
+- Full-prefill 模式要求 prompt 能放入预算；dynamic chunked 模式允许跨轮推进 prefill cursor。
 - 每个 running decode 请求必须存在且只存在一份 DecodeState。
 - 新 prefill 请求在下一轮才能参与 decode。
 - Request 完成后，其调度槽位和 KV state 都必须回收。

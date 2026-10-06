@@ -55,6 +55,43 @@ class Engine:
         """输入自身；返回是否仍有工作；只读，供调用方驱动循环。"""
         return self.scheduler.has_unfinished_requests()
 
+    def preempt_one(self, *, exclude_request_ids: set[str] | None = None) -> str:
+        """输入可选排除 IDs；返回 LIFO victim ID；释放执行状态并把逻辑请求放回 waiting。"""
+        if getattr(self.decode_runner, "allocator", None) is None:
+            raise RuntimeError("KV preemption requires a paged runner")
+        excluded = exclude_request_ids or set()
+        for request in reversed(self.scheduler.running):
+            if (
+                request.request_id not in excluded
+                and request.needs_decode
+                and request.request_id in self.decode_states
+                and request.num_preemptions < self.scheduler.max_preemptions
+            ):
+                # Scheduler 先验证 recompute budget；验证成功后再释放不可恢复的 KV。
+                self.scheduler.preempt_request(request)
+                state = self.decode_states.pop(request.request_id)
+                self.decode_runner.release_state(state)
+                return request.request_id
+        raise RuntimeError("No eligible decode request can be preempted")
+
+    def preempt_until_free(
+        self, required_blocks: int, *, exclude_request_ids: set[str] | None = None
+    ) -> tuple[str, ...]:
+        """输入目标 free blocks；返回 victims；查询 paged allocator 并重复抢占直到满足容量。"""
+        if type(required_blocks) is not int or required_blocks <= 0:
+            raise ValueError("required_blocks must be a positive integer")
+        allocator = getattr(self.decode_runner, "allocator", None)
+        if allocator is None:
+            raise RuntimeError("KV block pressure preemption requires a paged runner")
+        if required_blocks > allocator.num_blocks:
+            raise ValueError("required_blocks exceeds total KV block capacity")
+        victims: list[str] = []
+        while allocator.num_free_blocks < required_blocks:
+            victims.append(
+                self.preempt_one(exclude_request_ids=exclude_request_ids or set())
+            )
+        return tuple(victims)
+
     def step(self) -> EngineStepOutput:
         """输入队列与 KV 状态；返回本轮结果；可选记录 scheduler/forward/reclaim 阶段。"""
         total_timer = _PhaseTimer() if self.profiler is not None else None
@@ -77,6 +114,12 @@ class Engine:
 
         prefill_timer = _PhaseTimer() if self.profiler is not None else None
         with scope("miniserve::prefill"):
+            for request in plan.recompute_requests:
+                if request.request_id in self.decode_states:
+                    raise RuntimeError("Recompute request unexpectedly retained KV state")
+                self.decode_states[request.request_id] = (
+                    self.decode_runner.recompute_request(request)
+                )
             for chunk in plan.prefill_chunks:
                 request = chunk.request
                 existing_state = self.decode_states.get(request.request_id)
@@ -121,9 +164,10 @@ class Engine:
                 decode_seconds=decode_seconds,
                 reclaim_seconds=reclaim_seconds,
                 num_running=len(plan.running_requests),
-                num_prefill=len(plan.prefill_requests),
+                num_prefill=len(plan.prefill_requests) + len(plan.recompute_requests),
                 num_decode=len(plan.decode_requests),
-                prefill_tokens=sum(chunk.num_tokens for chunk in plan.prefill_chunks),
+                prefill_tokens=sum(chunk.num_tokens for chunk in plan.prefill_chunks)
+                + sum(len(r.recompute_token_ids) for r in plan.recompute_requests),
                 decode_tokens=len(plan.decode_requests),
                 scheduled_tokens=plan.num_scheduled_tokens,
             )

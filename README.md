@@ -17,9 +17,15 @@ flowchart LR
 
 核心目标是解释真实 serving 系统的控制流、KV 生命周期和性能取舍，而不是包装一个聊天 API。完整架构与 invariant 见 [architecture.md](docs/architecture.md)。
 
+准备简历深挖或项目答辩时，可直接阅读 [MiniServe 项目架构与面试答辩手册](docs/interview_handbook.md)：其中包含完整架构图、状态机、两条 KV 路径、调度算法、性能实验、设计取舍和 35 个高频问题。
+
 Phase B 已实现固定大小 KV block allocator、请求级 block table/slot mapping，以及可选的 paged KV storage + Hugging Face gather adapter；设计见 [block_allocator.md](docs/block_allocator.md)、[block_table.md](docs/block_table.md) 和 [paged_kv.md](docs/paged_kv.md)。Paged backend 已接入真实 Engine，但因 HF attention 仍需 gather/cat，GPU A/B 中没有获得性能提升。
 
 Dynamic KV backend 支持显式 `--chunked-prefill`：长 prompt 可跨轮处理，decode 请求优先占用 token budget。设计、限制和负性能实验见 [chunked_prefill.md](docs/chunked_prefill.md)。
+
+Paged KV backend 还支持显式容量水位抢占：Engine 释放 LIFO victim 的 blocks，Scheduler 将其放回等待队列，随后从 token history 重建 KV。它与当前仅支持 dynamic backend 的 chunked prefill 是两条独立实验路径；设计与正确性边界见 [preemption.md](docs/preemption.md)。
+
+Phase B 已完成。最终 profiler-driven 实验尝试用 direct copy 替换 dynamic KV 的 `pad + cat`，correctness 通过但端到端 GPU 指标回退，因此候选实现未保留；原始数据、限制和后续方向见 [phase_b_report.md](docs/phase_b_report.md)。
 
 ## 功能
 

@@ -82,7 +82,7 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 ## 5. 当前进度
 
-总路线为 30 步。目前完成 **28 / 30**，Phase B 已支持 decode-priority chunked prefill。
+总路线为 30 步。目前完成 **30 / 30**，Phase A 与 Phase B 教学路线均已完成。
 
 | 范围 | 状态 | 说明 |
 |---|---|---|
@@ -97,16 +97,18 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 | Step 26 | 已完成 | Request block table、跨块追加、slot mapping 与 batch metadata |
 | Step 27 | 已完成 | Paged KV storage、HF gather adapter、Engine 集成与 GPU A/B |
 | Step 28 | 已完成 | Partial prefill state、chunk budget、decode priority 与 GPU 实验 |
-| Step 29–30 | 待完成 | Preemption/recompute 与证据驱动优化 |
+| Step 29 | 已完成 | LIFO victim、KV block 回收、队尾重入与 recompute correctness |
+| Step 30 | 已完成 | Profiler-driven A/B、失败方案回退与 Phase B 总结 |
 
 当前验证基线：
 
-- 全套测试：115 passed。
+- 全套测试：118 passed。
 - `scripts/run_engine.py` 可运行完整 Engine 链路并与 Hugging Face `generate()` 对照。
 - `scripts/benchmark_serving.py` 支持 burst、constant、poisson 到达和多组调度参数比较。
 - 已有 CPU smoke、RTX 4070 / Qwen2.5-0.5B GPU benchmark matrix 和 CUDA operator trace。
+- `docs/interview_handbook.md` 汇总完整架构、设计取舍、实验结论和面试问答。
 
-当前工作区包含尚未提交的 Step 18–19 相关改动与实验结果；“已完成”表示功能和验证完成，不表示已经创建 Git commit。
+“已完成”表示功能、文档和验证完成，不表示已经创建 Git commit。
 
 ## 6. 30 步课程路线
 
@@ -333,15 +335,15 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 
 完成标准：长 prompt 不再因超过预算被拒绝；分块与完整 prefill 输出一致；有 TTFT/ITL trade-off 实验。已实现 Request prefill cursor、`PrefillChunk`、decode-priority 调度、partial DynamicCache 和最终 chunk 首 token 语义；9-token/budget-4 correctness 与 HF 对照通过。短 prompt GPU 实验中 chunked 配置吞吐和延迟均变差，说明 chunk 粒度必须匹配目标 workload。
 
-#### Step 29：Preemption 与 Recompute
+#### Step 29：Preemption 与 Recompute（已完成）
 
 目标：在 KV/sequence 容量不足时暂停低优先级请求，并通过 recompute 恢复。
 
 计划内容：调度状态、victim policy、KV 释放、重新进入 waiting、starvation 防护和恢复 correctness。
 
-完成标准：构造资源压力 workload，验证无死锁、无 KV 泄漏、请求最终完成，并量化 recompute 代价。
+完成标准：构造资源压力 workload，验证无死锁、无 KV 泄漏、请求最终完成，并量化 recompute 代价。已实现显式 block 水位抢占、LIFO victim、waiting 队尾重入、最大抢占次数和 paged cache 重建；压力测试中 victim 重计算 3 个历史 token，最终输出与 Hugging Face `generate()` 一致，结束后所有 blocks 均归还。设计与限制见 `docs/preemption.md`。
 
-#### Step 30：Profiler-Driven Optimization 与 Phase B 总结
+#### Step 30：Profiler-Driven Optimization 与 Phase B 总结（已完成）
 
 目标：根据 profiler 证据选择一项真实优化，并完成最终对比。
 
@@ -352,25 +354,25 @@ Phase B 的高级功能也保持教学规模：先实现可解释的数据结构
 - CUDA Graph，前提是 shape 与控制流适合。
 - 一个有明确热点证据的 Triton kernel。
 
-完成标准：形成“瓶颈证据 → 方案 → correctness → benchmark → 局限”的闭环；更新最终架构、性能报告、简历描述和下一阶段学习建议。
+完成标准：形成“瓶颈证据 → 方案 → correctness → benchmark → 局限”的闭环；更新最终架构、性能报告、简历描述和下一阶段学习建议。已根据 `aten::cat` trace 实验 direct-copy KV packing；候选输出正确，但 GPU 吞吐中位数下降 20.0%、TTFT/ITL 变差且显存不变，因此回退实现并保留原始 before/after 数据。完整结论见 `docs/phase_b_report.md`。
 
 ## 7. 近期执行顺序
 
-下一课是 **Step 21：PyTorch Profiler 与 GPU Profiling**。建议按以下顺序推进：
+30 步既定课程已完成。Phase B 的执行顺序为：
 
 ```text
-Step 20 分阶段计时（已完成）
+Step 25 Block Allocator（已完成）
     ↓
-Step 21 operator / kernel profiling
+Step 26 Block Table（已完成）
     ↓
-Step 22 GPU benchmark 与结果分析
+Step 27 Paged KV Execution（已完成）
     ↓
-Step 23 工程整合
+Step 28 Chunked Prefill（已完成）
     ↓
-Step 24 Phase A 公开交付
+Step 29 Preemption / Recompute（已完成）
+    ↓
+Step 30 Profiler-Driven Optimization / Phase B 总结（已完成）
 ```
-
-在 Step 24 完成前，不提前实现 Block KV、Paged KV 或 CUDA kernel。Phase A 达到简历可投标准后，可以开始投递，同时继续 Step 25–30。
 
 ## 8. 工程原则
 

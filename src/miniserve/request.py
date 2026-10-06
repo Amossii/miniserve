@@ -20,6 +20,7 @@ class ExecutionPhase(Enum):
 
     PREFILL = auto()
     DECODE = auto()
+    RECOMPUTE = auto()
 
 
 @dataclass
@@ -38,10 +39,15 @@ class Request:
     num_prefilled_tokens: int = 0
     first_token_time: float | None = None
     token_timestamps: list[float] = field(default_factory=list)
+    recompute_required: bool = False
+    num_preemptions: int = 0
+    num_recomputed_tokens: int = 0
 
     @property
     def phase(self) -> ExecutionPhase:
         """输入自身；返回阶段；只读，从布尔值派生以免两份状态冲突。"""
+        if self.recompute_required:
+            return ExecutionPhase.RECOMPUTE
         return (
             ExecutionPhase.DECODE if self.prefill_completed else ExecutionPhase.PREFILL
         )
@@ -79,7 +85,23 @@ class Request:
     @property
     def needs_decode(self) -> bool:
         """输入自身；返回是否还需 decode；只读，排除结束请求。"""
-        return self.prefill_completed and not self.is_finished
+        return (
+            self.prefill_completed
+            and not self.recompute_required
+            and not self.is_finished
+        )
+
+    @property
+    def needs_recompute(self) -> bool:
+        """输入自身；返回是否需重建已释放 KV；只读，逻辑输出 token 保持不变。"""
+        return self.recompute_required and not self.is_finished
+
+    @property
+    def recompute_token_ids(self) -> list[int]:
+        """输入自身；返回重建 KV 的 token 副本；排除仍作为下次 decode input 的最后 token。"""
+        if not self.generated_token_ids:
+            return list(self.prompt_token_ids)
+        return [*self.prompt_token_ids, *self.generated_token_ids[:-1]]
 
     @property
     def needs_prefill(self) -> bool:
@@ -146,6 +168,21 @@ class Request:
             raise RuntimeError("Only running request can finish.")
         self.status = RequestStatus.FINISHED
         self.finish_time = perf_counter() if timestamp is None else timestamp
+
+    def preempt_for_recompute(self) -> None:
+        """输入 RUNNING/DECODE 请求；无返回；保留 token/timestamps，退回 WAITING 并标记重建 KV。"""
+        if not self.is_running or not self.needs_decode:
+            raise RuntimeError("Only an active decode request can be preempted")
+        self.status = RequestStatus.WAITING
+        self.recompute_required = True
+        self.num_preemptions += 1
+
+    def mark_recomputed(self) -> None:
+        """输入自身；无返回；清除 recompute 标记，使已接纳请求恢复 DECODE。"""
+        if not self.is_running or not self.recompute_required:
+            raise RuntimeError("Request must be RUNNING and require recompute")
+        self.num_recomputed_tokens += len(self.recompute_token_ids)
+        self.recompute_required = False
 
     @property
     def ttft_seconds(self) -> float | None:

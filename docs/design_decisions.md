@@ -13,8 +13,18 @@
 | 原始样本留档 | JSON 保存时间戳与 samples | 可重算 P50/P99，避免平均分位数 | 文件体积高于只保存摘要 |
 | 公共 runtime | CLI 共用模型/Engine 装配 | demo、benchmark、profiler 走同一路径 | runtime 仍针对单机单模型 |
 
+## Phase B 补充决策
+
+| 决策 | 选择 | 原因 | 代价 / 后续方向 |
+|---|---|---|---|
+| Paged KV 定位 | 共享 block storage + HF gather adapter | 验证 allocator/table/ownership 的真实生命周期 | 不是 PagedAttention，forward 前仍需连续化 |
+| Chunked prefill backend | 只支持 Dynamic KV | partial DynamicCache 语义已经可验证 | 尚未实现 paged partial write |
+| Preemption backend | 只支持 Paged KV | 抢占由物理 block pressure 驱动 | 触发仍是显式水位调用 |
+| Victim policy | LIFO + waiting 尾部重入 + 次数上限 | 确定、易测试 | 尚无 priority/SLO-aware scoring |
+| 失败优化处理 | benchmark 无收益后回退 | 不为“优化”标签保留更慢代码 | 下一步需要交错 A/B 与 fused kernel |
+
 ## 未实现的生产能力
 
-MiniServe Phase A 不包含 HTTP/gRPC frontend、流式返回、取消、超时、优先级、抢占、prefix cache、quantization、tensor parallel、CUDA Graph 或自定义 attention kernel。它也没有生产级 paged KV allocator。
+MiniServe 不包含 HTTP/gRPC frontend、流式网络发送、取消、超时、优先级、prefix cache、quantization、tensor parallel、CUDA Graph 或自定义 attention kernel。当前 paged allocator 和 preemption 是教学规模，不是生产级实现。
 
-这些边界是有意控制的项目范围：Phase A 证明 autoregressive inference、KV 生命周期、continuous batching、token-budget scheduling、指标与 profiling 的理解；Phase B 再围绕已观测的 KV 数据搬运成本升级内存系统。
+这些边界是有意控制的项目范围：Phase A 证明 autoregressive inference、KV 生命周期、continuous batching、token-budget scheduling、指标与 profiling；Phase B 进一步验证 block metadata、paged storage、chunked prefill、preemption/recompute 和 profiler-driven optimization。
